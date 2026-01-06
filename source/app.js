@@ -246,16 +246,20 @@ export default function App() {
 		let currentClient = null;
 		let switchTimeout = null;
 		let countdownInterval = null;
+		let retryTimeout = null;
 
-		async function initMarkets() {
+		async function initMarkets(retryCount = 0) {
 			try {
+				if (retryTimeout) clearTimeout(retryTimeout);
+				setError(null);
+				
 				// Disconnect previous client
 				if (currentClient) {
 					currentClient.disconnect();
 				}
 
-				// Save previous window min prices to CSV
-				if (Object.keys(minPricesForCSVRef.current).length > 0) {
+				// Save previous window min prices to CSV (only if this is the first attempt of a new window)
+				if (retryCount === 0 && Object.keys(minPricesForCSVRef.current).length > 0) {
 					const timestamp = getCurrent15MinWindowTimestamp();
 					const windowStr = formatWindowTime(timestamp);
 					
@@ -287,34 +291,41 @@ export default function App() {
 					}
 				}
 
-				setStatus('Fetching market data...');
-				setBooks({});
-				setMinPrices({});
-				minPricesRef.current = {};
-				minPricesForCSVRef.current = {};
+				if (retryCount === 0) {
+					setBooks({});
+					setMinPrices({});
+					minPricesRef.current = {};
+					minPricesForCSVRef.current = {};
+				}
 
 				const timestamp = getCurrent15MinWindowTimestamp();
 				const newMarkets = {};
 				const allTokens = [];
+				let lastFetchError = '';
 
 				for (const asset of ASSETS) {
 					const slug = buildMarketSlug(asset, timestamp);
 					try {
+						setStatus(`Fetching ${asset} market... ${retryCount > 0 ? `(Retry ${retryCount}/10)` : ''}`);
 						const data = await fetchMarketData(slug);
 						newMarkets[asset] = data;
 						const tokens = extractTokenIds(data);
 						if (tokens) {
 							allTokens.push(...tokens);
+						} else {
+							console.warn(`No token IDs in ${asset} market data (Slug: ${slug})`);
 						}
 					} catch (err) {
-						console.error(`Failed to fetch ${asset} market:`, err.message);
+						const msg = `Failed to fetch ${asset} market (${slug}): ${err.message}`;
+						console.error(msg);
+						lastFetchError = msg;
 					}
 				}
 
 				setMarkets(newMarkets);
 
 				if (allTokens.length === 0) {
-					throw new Error('No token IDs found for any market');
+					throw new Error(lastFetchError || 'No token IDs found for any market');
 				}
 
 				setStatus('Connecting to WebSocket...');
@@ -388,11 +399,19 @@ export default function App() {
 
 				// Schedule switch to next window
 				const msUntilNext = getMsUntilNextWindow();
+				if (switchTimeout) clearTimeout(switchTimeout);
 				switchTimeout = setTimeout(() => {
 					initMarkets();
 				}, msUntilNext + 2000);
 			} catch (err) {
-				setError(err.message);
+				if (retryCount < 10) {
+					const nextRetryDelay = 5000;
+					setStatus(`Error: ${err.message}. Retrying in 5s... (${retryCount + 1}/10)`);
+					retryTimeout = setTimeout(() => initMarkets(retryCount + 1), nextRetryDelay);
+				} else {
+					setError(`Fatal Error: ${err.message}. Max retries reached.`);
+					setStatus('Stopped due to errors');
+				}
 			}
 		}
 
@@ -411,6 +430,7 @@ export default function App() {
 			if (currentClient) currentClient.disconnect();
 			if (switchTimeout) clearTimeout(switchTimeout);
 			if (countdownInterval) clearInterval(countdownInterval);
+			if (retryTimeout) clearTimeout(retryTimeout);
 		};
 	}, []);
 
