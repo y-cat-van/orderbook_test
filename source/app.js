@@ -167,6 +167,7 @@ export default function App() {
 	const [client, setClient] = useState(null);
 
 	const minPricesRef = useRef({});
+	const minPricesForCSVRef = useRef({});
 	const marketsRef = useRef({});
 
 	// Update marketsRef whenever markets state changes
@@ -181,6 +182,9 @@ export default function App() {
 			const sortedAsks = [...asks].sort((a, b) => Number(a.price) - Number(b.price));
 			return Number(sortedAsks[0].price);
 		};
+
+		const windowStart = getCurrent15MinWindowTimestamp() * 1000;
+		const isWithinFirst10Min = (Date.now() - windowStart) < 10 * 60 * 1000;
 
 		let changed = false;
 		const currentMarkets = marketsRef.current;
@@ -207,6 +211,12 @@ export default function App() {
 						minPricesRef.current[key] = val;
 						changed = true;
 					}
+					// Only update CSV record if within first 10 minutes
+					if (isWithinFirst10Min) {
+						if (!minPricesForCSVRef.current[key] || val < minPricesForCSVRef.current[key]) {
+							minPricesForCSVRef.current[key] = val;
+						}
+					}
 				}
 
 				if (bUpAsk !== null && aDownAsk !== null) {
@@ -215,6 +225,12 @@ export default function App() {
 					if (!minPricesRef.current[key] || val < minPricesRef.current[key]) {
 						minPricesRef.current[key] = val;
 						changed = true;
+					}
+					// Only update CSV record if within first 10 minutes
+					if (isWithinFirst10Min) {
+						if (!minPricesForCSVRef.current[key] || val < minPricesForCSVRef.current[key]) {
+							minPricesForCSVRef.current[key] = val;
+						}
 					}
 				}
 			});
@@ -239,10 +255,9 @@ export default function App() {
 				}
 
 				// Save previous window min prices to CSV
-				if (Object.keys(minPricesRef.current).length > 0) {
+				if (Object.keys(minPricesForCSVRef.current).length > 0) {
 					const timestamp = getCurrent15MinWindowTimestamp();
 					const windowStr = formatWindowTime(timestamp);
-					const currentMarkets = marketsRef.current;
 					
 					const combinationsToSave = [];
 					ASSETS.forEach((assetA, i) => {
@@ -250,18 +265,18 @@ export default function App() {
 							const key1 = `${assetA}_${assetB}_1`;
 							const key2 = `${assetA}_${assetB}_2`;
 							
-							if (minPricesRef.current[key1]) {
+							if (minPricesForCSVRef.current[key1]) {
 								combinationsToSave.push({
 									pair: `${assetA} & ${assetB}`,
 									label: `${assetA} Up + ${assetB} Down`,
-									minVal: minPricesRef.current[key1].toFixed(3)
+									minVal: minPricesForCSVRef.current[key1].toFixed(3)
 								});
 							}
-							if (minPricesRef.current[key2]) {
+							if (minPricesForCSVRef.current[key2]) {
 								combinationsToSave.push({
 									pair: `${assetA} & ${assetB}`,
 									label: `${assetB} Up + ${assetA} Down`,
-									minVal: minPricesRef.current[key2].toFixed(3)
+									minVal: minPricesForCSVRef.current[key2].toFixed(3)
 								});
 							}
 						});
@@ -276,6 +291,7 @@ export default function App() {
 				setBooks({});
 				setMinPrices({});
 				minPricesRef.current = {};
+				minPricesForCSVRef.current = {};
 
 				const timestamp = getCurrent15MinWindowTimestamp();
 				const newMarkets = {};
