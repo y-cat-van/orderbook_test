@@ -36,10 +36,10 @@ export function formatWindowTime(timestamp) {
 }
 
 /**
- * Build the market slug for the 15-minute BTC up/down market
+ * Build the market slug for the 15-minute up/down market
  */
-export function buildMarketSlug(timestamp) {
-	return `btc-updown-15m-${timestamp}`;
+export function buildMarketSlug(asset, timestamp) {
+	return `${asset.toLowerCase()}-updown-15m-${timestamp}`;
 }
 
 /**
@@ -79,4 +79,28 @@ export function parseOutcomes(marketData) {
 	}
 
 	return JSON.parse(marketData.markets[0].outcomes);
+}
+
+import fs from 'fs';
+import path from 'path';
+
+/**
+ * Append minimum prices to a CSV file
+ */
+export function appendMinPricesToCSV(windowStart, combinations) {
+	const filePath = path.join(process.cwd(), 'market_min_prices.csv');
+	const fileExists = fs.existsSync(filePath);
+
+	// Create header if file doesn't exist
+	if (!fileExists) {
+		fs.writeFileSync(filePath, 'window_start,pair,combination_type,min_sum_price\n');
+	}
+
+	const rows = combinations
+		.map(c => `"${windowStart}","${c.pair}","${c.label}","${c.minVal}"`)
+		.join('\n');
+
+	if (rows) {
+		fs.appendFileSync(filePath, rows + '\n');
+	}
 }
