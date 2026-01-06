@@ -6,6 +6,7 @@ import {
 	getNext15MinWindowTimestamp,
 	getMsUntilNextWindow,
 	formatWindowTime,
+	formatOccurrenceTime,
 	buildMarketSlug,
 	fetchMarketData,
 	extractTokenIds,
@@ -131,8 +132,10 @@ function PriceCombinations({markets, books, minPrices}) {
 						pair: `${assetA} & ${assetB}`,
 						val1: (aUpAsk !== null && bDownAsk !== null) ? (aUpAsk + bDownAsk).toFixed(3) : 'N/A',
 						val2: (bUpAsk !== null && aDownAsk !== null) ? (bUpAsk + aDownAsk).toFixed(3) : 'N/A',
-						minVal1: minPrices[key1] ? minPrices[key1].toFixed(3) : 'N/A',
-						minVal2: minPrices[key2] ? minPrices[key2].toFixed(3) : 'N/A',
+						minVal1: minPrices[key1] ? minPrices[key1].val.toFixed(3) : 'N/A',
+						minVal2: minPrices[key2] ? minPrices[key2].val.toFixed(3) : 'N/A',
+						minTime1: minPrices[key1]?.time,
+						minTime2: minPrices[key2]?.time,
 						label1: `${assetA} Up + ${assetB} Down`,
 						label2: `${assetB} Up + ${assetA} Down`
 					});
@@ -148,8 +151,8 @@ function PriceCombinations({markets, books, minPrices}) {
 				{combinations.map((c, i) => (
 					<Box key={i} flexDirection="column" marginRight={4} marginBottom={1}>
 						<Text bold underline>{c.pair}:</Text>
-						<Text>  - {c.label1.padEnd(18)}: <Text color="magenta">{c.val1}</Text> <Text dimColor>(Min: {c.minVal1})</Text></Text>
-						<Text>  - {c.label2.padEnd(18)}: <Text color="magenta">{c.val2}</Text> <Text dimColor>(Min: {c.minVal2})</Text></Text>
+						<Text>  - {c.label1.padEnd(18)}: <Text color="magenta">{c.val1}</Text> <Text dimColor>(Min: {c.minVal1}{c.minTime1 ? ` at ${c.minTime1}` : ''})</Text></Text>
+						<Text>  - {c.label2.padEnd(18)}: <Text color="magenta">{c.val2}</Text> <Text dimColor>(Min: {c.minVal2}{c.minTime2 ? ` at ${c.minTime2}` : ''})</Text></Text>
 					</Box>
 				))}
 			</Box>
@@ -185,6 +188,8 @@ export default function App() {
 
 		const windowStart = getCurrent15MinWindowTimestamp() * 1000;
 		const isWithinFirst10Min = (Date.now() - windowStart) < 10 * 60 * 1000;
+		const now = Date.now();
+		const timeStr = formatOccurrenceTime(now);
 
 		let changed = false;
 		const currentMarkets = marketsRef.current;
@@ -207,14 +212,14 @@ export default function App() {
 				if (aUpAsk !== null && bDownAsk !== null) {
 					const val = aUpAsk + bDownAsk;
 					const key = `${assetA}_${assetB}_1`;
-					if (!minPricesRef.current[key] || val < minPricesRef.current[key]) {
-						minPricesRef.current[key] = val;
+					if (!minPricesRef.current[key] || val < minPricesRef.current[key].val) {
+						minPricesRef.current[key] = { val, time: timeStr };
 						changed = true;
 					}
 					// Only update CSV record if within first 10 minutes
 					if (isWithinFirst10Min) {
-						if (!minPricesForCSVRef.current[key] || val < minPricesForCSVRef.current[key]) {
-							minPricesForCSVRef.current[key] = val;
+						if (!minPricesForCSVRef.current[key] || val < minPricesForCSVRef.current[key].val) {
+							minPricesForCSVRef.current[key] = { val, time: timeStr };
 						}
 					}
 				}
@@ -222,14 +227,14 @@ export default function App() {
 				if (bUpAsk !== null && aDownAsk !== null) {
 					const val = bUpAsk + aDownAsk;
 					const key = `${assetA}_${assetB}_2`;
-					if (!minPricesRef.current[key] || val < minPricesRef.current[key]) {
-						minPricesRef.current[key] = val;
+					if (!minPricesRef.current[key] || val < minPricesRef.current[key].val) {
+						minPricesRef.current[key] = { val, time: timeStr };
 						changed = true;
 					}
 					// Only update CSV record if within first 10 minutes
 					if (isWithinFirst10Min) {
-						if (!minPricesForCSVRef.current[key] || val < minPricesForCSVRef.current[key]) {
-							minPricesForCSVRef.current[key] = val;
+						if (!minPricesForCSVRef.current[key] || val < minPricesForCSVRef.current[key].val) {
+							minPricesForCSVRef.current[key] = { val, time: timeStr };
 						}
 					}
 				}
@@ -273,14 +278,16 @@ export default function App() {
 								combinationsToSave.push({
 									pair: `${assetA} & ${assetB}`,
 									label: `${assetA} Up + ${assetB} Down`,
-									minVal: minPricesForCSVRef.current[key1].toFixed(3)
+									minVal: minPricesForCSVRef.current[key1].val.toFixed(3),
+									time: minPricesForCSVRef.current[key1].time
 								});
 							}
 							if (minPricesForCSVRef.current[key2]) {
 								combinationsToSave.push({
 									pair: `${assetA} & ${assetB}`,
 									label: `${assetB} Up + ${assetA} Down`,
-									minVal: minPricesForCSVRef.current[key2].toFixed(3)
+									minVal: minPricesForCSVRef.current[key2].val.toFixed(3),
+									time: minPricesForCSVRef.current[key2].time
 								});
 							}
 						});
