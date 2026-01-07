@@ -356,7 +356,10 @@ export default function App() {
 				});
 
 				currentClient.on('error', err => {
-					setError(`WebSocket error: ${err.message}`);
+					const msg = `WebSocket error: ${err.message}`;
+					setStatus(`${msg}. Retrying in 5s...`);
+					if (retryTimeout) clearTimeout(retryTimeout);
+					retryTimeout = setTimeout(() => initMarkets(0), 5000);
 				});
 
 				currentClient.onBook(event => {
@@ -446,16 +449,6 @@ export default function App() {
 		};
 	}, []);
 
-	if (error) {
-		return (
-			<Box flexDirection="column">
-				<Text color="red" bold>
-					Error: {error}
-				</Text>
-			</Box>
-		);
-	}
-
 	const windowStart = formatWindowTime(getCurrent15MinWindowTimestamp());
 	const windowEnd = formatWindowTime(getNext15MinWindowTimestamp());
 
@@ -476,7 +469,7 @@ export default function App() {
 					<Text bold>Next:</Text> {countdown}
 				</Text>
 				<Text> | </Text>
-				<Text dimColor>{status}</Text>
+				<Text color={status.includes('Error') || status.includes('Failed') ? 'red' : 'dimColor'}>{status}</Text>
 			</Box>
 
 			{ASSETS.map(asset => (
