@@ -30,6 +30,9 @@ export function formatWindowTime(timestamp) {
 	const date = new Date(timestamp * 1000);
 	return date.toLocaleString('zh-CN', {
 		hour12: false,
+		year: 'numeric',
+		month: '2-digit',
+		day: '2-digit',
 		hour: '2-digit',
 		minute: '2-digit',
 		timeZone: 'Asia/Shanghai'
@@ -37,11 +40,14 @@ export function formatWindowTime(timestamp) {
 }
 
 /**
- * Format timestamp to readable occurrence time string (HH:mm:ss) in UTC+8
+ * Format timestamp to readable occurrence time string (YYYY/MM/DD HH:mm:ss) in UTC+8
  */
 export function formatOccurrenceTime(timestamp) {
-	return new Date(timestamp).toLocaleTimeString('zh-CN', {
+	return new Date(timestamp).toLocaleString('zh-CN', {
 		hour12: false,
+		year: 'numeric',
+		month: '2-digit',
+		day: '2-digit',
 		hour: '2-digit',
 		minute: '2-digit',
 		second: '2-digit',
