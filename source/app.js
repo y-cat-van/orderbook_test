@@ -172,6 +172,7 @@ export default function App() {
 	const minPricesRef = useRef({});
 	const minPricesForCSVRef = useRef({});
 	const marketsRef = useRef({});
+	const hasSavedRef = useRef(false);
 
 	// Update marketsRef whenever markets state changes
 	useEffect(() => {
@@ -187,7 +188,9 @@ export default function App() {
 		};
 
 		const windowStart = getCurrent15MinWindowTimestamp() * 1000;
-		const isWithinFirst10Min = (Date.now() - windowStart) < 10 * 60 * 1000;
+		const elapsed = Date.now() - windowStart;
+		const isWithinFirst10Min = elapsed < 10 * 60 * 1000;
+		const isAfter10Min = elapsed >= 10 * 60 * 1000;
 		const now = Date.now();
 		const timeStr = formatOccurrenceTime(now);
 
@@ -244,6 +247,40 @@ export default function App() {
 		if (changed) {
 			setMinPrices({...minPricesRef.current});
 		}
+
+		// Auto-save to CSV after 10 minutes
+		if (isAfter10Min && !hasSavedRef.current && Object.keys(minPricesForCSVRef.current).length > 0) {
+			const windowStr = formatWindowTime(windowStart / 1000);
+			const combinationsToSave = [];
+			ASSETS.forEach((assetA, i) => {
+				ASSETS.slice(i + 1).forEach(assetB => {
+					const key1 = `${assetA}_${assetB}_1`;
+					const key2 = `${assetA}_${assetB}_2`;
+					
+					if (minPricesForCSVRef.current[key1]) {
+						combinationsToSave.push({
+							pair: `${assetA} & ${assetB}`,
+							label: `${assetA} Up + ${assetB} Down`,
+							minVal: minPricesForCSVRef.current[key1].val.toFixed(3),
+							time: minPricesForCSVRef.current[key1].time
+						});
+					}
+					if (minPricesForCSVRef.current[key2]) {
+						combinationsToSave.push({
+							pair: `${assetA} & ${assetB}`,
+							label: `${assetB} Up + ${assetA} Down`,
+							minVal: minPricesForCSVRef.current[key2].val.toFixed(3),
+							time: minPricesForCSVRef.current[key2].time
+						});
+					}
+				});
+			});
+			
+			if (combinationsToSave.length > 0) {
+				appendMinPricesToCSV(windowStr, combinationsToSave);
+				hasSavedRef.current = true;
+			}
+		}
 	};
 
 	// Initialize and switch markets
@@ -263,46 +300,12 @@ export default function App() {
 					currentClient.disconnect();
 				}
 
-				// Save previous window min prices to CSV (only if this is the first attempt of a new window)
-				if (retryCount === 0 && Object.keys(minPricesForCSVRef.current).length > 0) {
-					const timestamp = getCurrent15MinWindowTimestamp();
-					const windowStr = formatWindowTime(timestamp);
-					
-					const combinationsToSave = [];
-					ASSETS.forEach((assetA, i) => {
-						ASSETS.slice(i + 1).forEach(assetB => {
-							const key1 = `${assetA}_${assetB}_1`;
-							const key2 = `${assetA}_${assetB}_2`;
-							
-							if (minPricesForCSVRef.current[key1]) {
-								combinationsToSave.push({
-									pair: `${assetA} & ${assetB}`,
-									label: `${assetA} Up + ${assetB} Down`,
-									minVal: minPricesForCSVRef.current[key1].val.toFixed(3),
-									time: minPricesForCSVRef.current[key1].time
-								});
-							}
-							if (minPricesForCSVRef.current[key2]) {
-								combinationsToSave.push({
-									pair: `${assetA} & ${assetB}`,
-									label: `${assetB} Up + ${assetA} Down`,
-									minVal: minPricesForCSVRef.current[key2].val.toFixed(3),
-									time: minPricesForCSVRef.current[key2].time
-								});
-							}
-						});
-					});
-					
-					if (combinationsToSave.length > 0) {
-						appendMinPricesToCSV(windowStr, combinationsToSave);
-					}
-				}
-
 				if (retryCount === 0) {
 					setBooks({});
 					setMinPrices({});
 					minPricesRef.current = {};
 					minPricesForCSVRef.current = {};
+					hasSavedRef.current = false;
 				}
 
 				const timestamp = getCurrent15MinWindowTimestamp();
