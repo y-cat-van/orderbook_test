@@ -303,6 +303,8 @@ export default function App() {
 				if (retryCount === 0) {
 					setBooks({});
 					setMinPrices({});
+					setMarkets({});
+					marketsRef.current = {};
 					minPricesRef.current = {};
 					minPricesForCSVRef.current = {};
 					hasSavedRef.current = false;
