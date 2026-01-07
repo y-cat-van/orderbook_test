@@ -173,6 +173,7 @@ export default function App() {
 	const minPricesForCSVRef = useRef({});
 	const marketsRef = useRef({});
 	const hasSavedRef = useRef(false);
+	const totalRetriesRef = useRef(0);
 
 	// Update marketsRef whenever markets state changes
 	useEffect(() => {
@@ -277,7 +278,7 @@ export default function App() {
 			});
 			
 			if (combinationsToSave.length > 0) {
-				appendMinPricesToCSV(windowStr, combinationsToSave);
+				appendMinPricesToCSV(windowStr, combinationsToSave, totalRetriesRef.current);
 				hasSavedRef.current = true;
 			}
 		}
@@ -308,6 +309,9 @@ export default function App() {
 					minPricesRef.current = {};
 					minPricesForCSVRef.current = {};
 					hasSavedRef.current = false;
+					totalRetriesRef.current = 0;
+				} else {
+					totalRetriesRef.current += 1;
 				}
 
 				const timestamp = getCurrent15MinWindowTimestamp();
@@ -358,6 +362,7 @@ export default function App() {
 				currentClient.on('error', err => {
 					const msg = `WebSocket error: ${err.message}`;
 					setStatus(`${msg}. Retrying in 5s...`);
+					totalRetriesRef.current += 1;
 					if (retryTimeout) clearTimeout(retryTimeout);
 					retryTimeout = setTimeout(() => initMarkets(0), 5000);
 				});

@@ -107,17 +107,17 @@ import path from 'path';
 /**
  * Append minimum prices to a CSV file
  */
-export function appendMinPricesToCSV(windowStart, combinations) {
+export function appendMinPricesToCSV(windowStart, combinations, retryCount = 0) {
 	const filePath = path.join(process.cwd(), 'market_min_prices.csv');
 	const fileExists = fs.existsSync(filePath);
 
 	// Create header if file doesn't exist
 	if (!fileExists) {
-		fs.writeFileSync(filePath, 'window_start,pair,combination_type,min_sum_price,occurrence_time\n');
+		fs.writeFileSync(filePath, 'window_start,pair,combination_type,min_sum_price,occurrence_time,retry_count\n');
 	}
 
 	const rows = combinations
-		.map(c => `"${windowStart}","${c.pair}","${c.label}","${c.minVal}","${c.time}"`)
+		.map(c => `"${windowStart}","${c.pair}","${c.label}","${c.minVal}","${c.time}","${retryCount}"`)
 		.join('\n');
 
 	if (rows) {
