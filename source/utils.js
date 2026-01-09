@@ -124,3 +124,26 @@ export function appendMinPricesToCSV(windowStart, combinations, retryCount = 0) 
 		fs.appendFileSync(filePath, rows + '\n');
 	}
 }
+
+/**
+ * Append single asset extreme prices to a CSV file
+ */
+export function appendSingleAssetStatsToCSV(windowStart, stats, retryCount = 0) {
+	const filePath = path.join(process.cwd(), 'single_asset_extremes.csv');
+	const fileExists = fs.existsSync(filePath);
+
+	if (!fileExists) {
+		fs.writeFileSync(filePath, 'window_start,asset,direction,min_ask,min_ask_time,max_ask,max_ask_time,retry_count\n');
+	}
+
+	const rows = Object.entries(stats)
+		.map(([key, data]) => {
+			const [asset, direction] = key.split('_');
+			return `"${windowStart}","${asset}","${direction}","${data.min}","${data.minTime}","${data.max}","${data.maxTime}","${retryCount}"`;
+		})
+		.join('\n');
+
+	if (rows) {
+		fs.appendFileSync(filePath, rows + '\n');
+	}
+}

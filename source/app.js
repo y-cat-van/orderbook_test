@@ -12,6 +12,7 @@ import {
 	extractTokenIds,
 	parseOutcomes,
 	appendMinPricesToCSV,
+	appendSingleAssetStatsToCSV,
 } from './utils.js';
 
 const ASSETS = ['BTC', 'ETH', 'SOL', 'XRP'];
@@ -172,6 +173,7 @@ export default function App() {
 	const minPricesRef = useRef({});
 	const minPricesForCSVRef = useRef({});
 	const marketsRef = useRef({});
+	const singleAssetStatsRef = useRef({});
 	const hasSavedRef = useRef(false);
 	const totalRetriesRef = useRef(0);
 
@@ -195,6 +197,29 @@ export default function App() {
 		const now = Date.now();
 		const timeStr = formatOccurrenceTime(now);
 
+		const updateSingleAssetExtremes = (asset, direction, price) => {
+			if (price === null) return;
+			const key = `${asset}_${direction}`;
+			if (!singleAssetStatsRef.current[key]) {
+				singleAssetStatsRef.current[key] = {
+					min: price,
+					minTime: timeStr,
+					max: price,
+					maxTime: timeStr
+				};
+			} else {
+				const stats = singleAssetStatsRef.current[key];
+				if (price < stats.min) {
+					stats.min = price;
+					stats.minTime = timeStr;
+				}
+				if (price > stats.max) {
+					stats.max = price;
+					stats.maxTime = timeStr;
+				}
+			}
+		};
+
 		let changed = false;
 		const currentMarkets = marketsRef.current;
 
@@ -212,6 +237,14 @@ export default function App() {
 				const aDownAsk = getLowestAsk(currentBooks[idsA[1]]);
 				const bUpAsk = getLowestAsk(currentBooks[idsB[0]]);
 				const bDownAsk = getLowestAsk(currentBooks[idsB[1]]);
+
+				// Update single asset stats during first 10 minutes
+				if (isWithinFirst10Min) {
+					updateSingleAssetExtremes(assetA, 'Up', aUpAsk);
+					updateSingleAssetExtremes(assetA, 'Down', aDownAsk);
+					updateSingleAssetExtremes(assetB, 'Up', bUpAsk);
+					updateSingleAssetExtremes(assetB, 'Down', bDownAsk);
+				}
 
 				if (aUpAsk !== null && bDownAsk !== null) {
 					const val = aUpAsk + bDownAsk;
@@ -279,6 +312,10 @@ export default function App() {
 			
 			if (combinationsToSave.length > 0) {
 				appendMinPricesToCSV(windowStr, combinationsToSave, totalRetriesRef.current);
+				// Also save single asset stats
+				if (Object.keys(singleAssetStatsRef.current).length > 0) {
+					appendSingleAssetStatsToCSV(windowStr, singleAssetStatsRef.current, totalRetriesRef.current);
+				}
 				hasSavedRef.current = true;
 			}
 		}
@@ -308,6 +345,7 @@ export default function App() {
 					marketsRef.current = {};
 					minPricesRef.current = {};
 					minPricesForCSVRef.current = {};
+					singleAssetStatsRef.current = {};
 					hasSavedRef.current = false;
 					totalRetriesRef.current = 0;
 				} else {
