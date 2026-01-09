@@ -192,6 +192,7 @@ export default function App() {
 
 		const windowStart = getCurrent15MinWindowTimestamp() * 1000;
 		const elapsed = Date.now() - windowStart;
+		const isWithinFirst5Min = elapsed < 5 * 60 * 1000;
 		const isWithinFirst10Min = elapsed < 10 * 60 * 1000;
 		const isAfter10Min = elapsed >= 10 * 60 * 1000;
 		const now = Date.now();
@@ -209,7 +210,7 @@ export default function App() {
 				};
 			} else {
 				const stats = singleAssetStatsRef.current[key];
-				if (price < stats.min) {
+				if (isWithinFirst5Min && price < stats.min) {
 					stats.min = price;
 					stats.minTime = timeStr;
 				}
