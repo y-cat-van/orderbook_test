@@ -133,13 +133,13 @@ export function appendSingleAssetStatsToCSV(windowStart, stats, retryCount = 0) 
 	const fileExists = fs.existsSync(filePath);
 
 	if (!fileExists) {
-		fs.writeFileSync(filePath, 'window_start,asset,direction,min_ask,min_ask_time,max_ask,max_ask_time,retry_count\n');
+		fs.writeFileSync(filePath, 'window_start,asset,direction,min_ask,min_ask_time,max_ask,max_ask_time,first_below_04,last_below_04,first_above_06,last_above_06,retry_count\n');
 	}
 
 	const rows = Object.entries(stats)
 		.map(([key, data]) => {
 			const [asset, direction] = key.split('_');
-			return `"${windowStart}","${asset}","${direction}","${data.min}","${data.minTime}","${data.max}","${data.maxTime}","${retryCount}"`;
+			return `"${windowStart}","${asset}","${direction}","${data.min}","${data.minTime}","${data.max}","${data.maxTime}","${data.firstBelow04 || ''}","${data.lastBelow04 || ''}","${data.firstAbove06 || ''}","${data.lastAbove06 || ''}","${retryCount}"`;
 		})
 		.join('\n');
 

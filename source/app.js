@@ -206,7 +206,11 @@ export default function App() {
 					min: price,
 					minTime: timeStr,
 					max: price,
-					maxTime: timeStr
+					maxTime: timeStr,
+					firstBelow04: price < 0.4 ? timeStr : '',
+					lastBelow04: price < 0.4 ? timeStr : '',
+					firstAbove06: price > 0.6 ? timeStr : '',
+					lastAbove06: price > 0.6 ? timeStr : ''
 				};
 			} else {
 				const stats = singleAssetStatsRef.current[key];
@@ -217,6 +221,16 @@ export default function App() {
 				if (price > stats.max) {
 					stats.max = price;
 					stats.maxTime = timeStr;
+				}
+
+				// 区间统计 logic (0-10分钟内运行)
+				if (price < 0.4) {
+					if (!stats.firstBelow04) stats.firstBelow04 = timeStr;
+					stats.lastBelow04 = timeStr;
+				}
+				if (price > 0.6) {
+					if (!stats.firstAbove06) stats.firstAbove06 = timeStr;
+					stats.lastAbove06 = timeStr;
 				}
 			}
 		};
