@@ -105,6 +105,43 @@ import fs from 'fs';
 import path from 'path';
 
 /**
+ * Calculate the Unix timestamp for the current 1-hour window start.
+ */
+export function getCurrent1hWindowTimestamp() {
+	const now = Math.floor(Date.now() / 1000);
+	const windowSeconds = 60 * 60; // 1 hour
+	return Math.floor(now / windowSeconds) * windowSeconds;
+}
+
+/**
+ * Get the 1h market slug based on timestamp
+ * Format: {asset}-up-or-down-{month}-{day}-{hour}{am/pm}-et
+ */
+export function get1hMarketSlug(asset, timestamp) {
+	const date = new Date(timestamp * 1000);
+	// Convert to America/New_York (ET)
+	const etOptions = {
+		timeZone: 'America/New_York',
+		month: 'long',
+		day: 'numeric',
+		hour: 'numeric',
+		hour12: true
+	};
+	const etParts = new Intl.DateTimeFormat('en-US', etOptions).formatToParts(date);
+	
+	let month = '', day = '', hour = '', dayPeriod = '';
+	for (const part of etParts) {
+		if (part.type === 'month') month = part.value.toLowerCase();
+		if (part.type === 'day') day = part.value;
+		if (part.type === 'hour') hour = part.value;
+		if (part.type === 'dayPeriod') dayPeriod = part.value.toLowerCase();
+	}
+	
+	const hourStr = `${hour}${dayPeriod}`; // e.g., 10am
+	return `${asset.toLowerCase()}-up-or-down-${month}-${day}-${hourStr}-et`;
+}
+
+/**
  * Append minimum prices to a CSV file
  */
 export function appendMinPricesToCSV(windowStart, combinations, retryCount = 0) {
@@ -130,6 +167,49 @@ export function appendMinPricesToCSV(windowStart, combinations, retryCount = 0) 
  */
 export function appendSingleAssetStatsToCSV(windowStart, stats, retryCount = 0) {
 	const filePath = path.join(process.cwd(), 'single_asset_extremes.csv');
+	const fileExists = fs.existsSync(filePath);
+
+	if (!fileExists) {
+		fs.writeFileSync(filePath, 'window_start,asset,direction,min_ask,min_ask_time,max_ask,max_ask_time,first_below_04,last_below_04,first_above_06,last_above_06,retry_count\n');
+	}
+
+	const rows = Object.entries(stats)
+		.map(([key, data]) => {
+			const [asset, direction] = key.split('_');
+			return `"${windowStart}","${asset}","${direction}","${data.min}","${data.minTime}","${data.max}","${data.maxTime}","${data.firstBelow04 || ''}","${data.lastBelow04 || ''}","${data.firstAbove06 || ''}","${data.lastAbove06 || ''}","${retryCount}"`;
+		})
+		.join('\n');
+
+	if (rows) {
+		fs.appendFileSync(filePath, rows + '\n');
+	}
+}
+
+/**
+ * Append minimum prices to a 1h CSV file
+ */
+export function appendMinPricesToCSV1h(windowStart, combinations, retryCount = 0) {
+	const filePath = path.join(process.cwd(), 'market_min_prices_1h.csv');
+	const fileExists = fs.existsSync(filePath);
+
+	if (!fileExists) {
+		fs.writeFileSync(filePath, 'window_start,pair,combination_type,min_sum_price,occurrence_time,retry_count\n');
+	}
+
+	const rows = combinations
+		.map(c => `"${windowStart}","${c.pair}","${c.label}","${c.minVal}","${c.time}","${retryCount}"`)
+		.join('\n');
+
+	if (rows) {
+		fs.appendFileSync(filePath, rows + '\n');
+	}
+}
+
+/**
+ * Append single asset extreme prices to a 1h CSV file
+ */
+export function appendSingleAssetStatsToCSV1h(windowStart, stats, retryCount = 0) {
+	const filePath = path.join(process.cwd(), 'single_asset_extremes_1h.csv');
 	const fileExists = fs.existsSync(filePath);
 
 	if (!fileExists) {

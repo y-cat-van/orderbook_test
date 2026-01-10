@@ -84,3 +84,6 @@ Thumbs.db
 *.pid.lock
 
 market_min_prices.csv
+single_asset_extremes.csv
+market_min_prices_1h.csv
+single_asset_extremes_1h.csv

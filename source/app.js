@@ -13,6 +13,10 @@ import {
 	parseOutcomes,
 	appendMinPricesToCSV,
 	appendSingleAssetStatsToCSV,
+	getCurrent1hWindowTimestamp,
+	get1hMarketSlug,
+	appendMinPricesToCSV1h,
+	appendSingleAssetStatsToCSV1h,
 } from './utils.js';
 
 const ASSETS = ['BTC', 'ETH', 'SOL', 'XRP'];
@@ -173,8 +177,12 @@ export default function App() {
 	const minPricesRef = useRef({});
 	const minPricesForCSVRef = useRef({});
 	const marketsRef = useRef({});
+	const markets1hRef = useRef({});
 	const singleAssetStatsRef = useRef({});
+	const singleAssetStats1hRef = useRef({});
+	const minPricesForCSV1hRef = useRef({});
 	const hasSavedRef = useRef(false);
+	const hasSaved1hRef = useRef(false);
 	const totalRetriesRef = useRef(0);
 
 	// Update marketsRef whenever markets state changes
@@ -195,14 +203,21 @@ export default function App() {
 		const isWithinFirst5Min = elapsed < 5 * 60 * 1000;
 		const isWithinFirst10Min = elapsed < 10 * 60 * 1000;
 		const isAfter10Min = elapsed >= 10 * 60 * 1000;
+
+		const windowStart1h = getCurrent1hWindowTimestamp() * 1000;
+		const elapsed1h = Date.now() - windowStart1h;
+		const isWithinFirst55Min1h = elapsed1h < 55 * 60 * 1000;
+		const isAfter55Min1h = elapsed1h >= 55 * 60 * 1000;
+		const isSaveTime1h = elapsed1h >= 56 * 60 * 1000;
+
 		const now = Date.now();
 		const timeStr = formatOccurrenceTime(now);
 
-		const updateSingleAssetExtremes = (asset, direction, price) => {
+		const updateSingleAssetExtremes = (asset, direction, price, statsRef, isMinStatsPeriod, isMaxStatsPeriod) => {
 			if (price === null) return;
 			const key = `${asset}_${direction}`;
-			if (!singleAssetStatsRef.current[key]) {
-				singleAssetStatsRef.current[key] = {
+			if (!statsRef.current[key]) {
+				statsRef.current[key] = {
 					min: price,
 					minTime: timeStr,
 					max: price,
@@ -213,80 +228,118 @@ export default function App() {
 					lastAbove06: price > 0.6 ? timeStr : ''
 				};
 			} else {
-				const stats = singleAssetStatsRef.current[key];
-				if (isWithinFirst5Min && price < stats.min) {
+				const stats = statsRef.current[key];
+				if (isMinStatsPeriod && price < stats.min) {
 					stats.min = price;
 					stats.minTime = timeStr;
 				}
-				if (price > stats.max) {
+				if (isMaxStatsPeriod && price > stats.max) {
 					stats.max = price;
 					stats.maxTime = timeStr;
 				}
 
-				// 区间统计 logic (0-10分钟内运行)
-				if (price < 0.4) {
-					if (!stats.firstBelow04) stats.firstBelow04 = timeStr;
-					stats.lastBelow04 = timeStr;
-				}
-				if (price > 0.6) {
-					if (!stats.firstAbove06) stats.firstAbove06 = timeStr;
-					stats.lastAbove06 = timeStr;
+				// 区间统计 logic
+				if (isMaxStatsPeriod) {
+					if (price < 0.4) {
+						if (!stats.firstBelow04) stats.firstBelow04 = timeStr;
+						stats.lastBelow04 = timeStr;
+					}
+					if (price > 0.6) {
+						if (!stats.firstAbove06) stats.firstAbove06 = timeStr;
+						stats.lastAbove06 = timeStr;
+					}
 				}
 			}
 		};
 
 		let changed = false;
 		const currentMarkets = marketsRef.current;
+		const currentMarkets1h = markets1hRef.current;
 
 		ASSETS.forEach((assetA, i) => {
 			ASSETS.slice(i + 1).forEach(assetB => {
+				// --- 15m Logic ---
 				const dataA = currentMarkets[assetA];
 				const dataB = currentMarkets[assetB];
-				if (!dataA || !dataB) return;
+				if (dataA && dataB) {
+					const idsA = extractTokenIds(dataA);
+					const idsB = extractTokenIds(dataB);
+					if (idsA && idsB) {
+						const aUpAsk = getLowestAsk(currentBooks[idsA[0]]);
+						const aDownAsk = getLowestAsk(currentBooks[idsA[1]]);
+						const bUpAsk = getLowestAsk(currentBooks[idsB[0]]);
+						const bDownAsk = getLowestAsk(currentBooks[idsB[1]]);
 
-				const idsA = extractTokenIds(dataA);
-				const idsB = extractTokenIds(dataB);
-				if (!idsA || !idsB) return;
+						if (isWithinFirst10Min) {
+							updateSingleAssetExtremes(assetA, 'Up', aUpAsk, singleAssetStatsRef, isWithinFirst5Min, true);
+							updateSingleAssetExtremes(assetA, 'Down', aDownAsk, singleAssetStatsRef, isWithinFirst5Min, true);
+							updateSingleAssetExtremes(assetB, 'Up', bUpAsk, singleAssetStatsRef, isWithinFirst5Min, true);
+							updateSingleAssetExtremes(assetB, 'Down', bDownAsk, singleAssetStatsRef, isWithinFirst5Min, true);
+						}
 
-				const aUpAsk = getLowestAsk(currentBooks[idsA[0]]);
-				const aDownAsk = getLowestAsk(currentBooks[idsA[1]]);
-				const bUpAsk = getLowestAsk(currentBooks[idsB[0]]);
-				const bDownAsk = getLowestAsk(currentBooks[idsB[1]]);
+						if (aUpAsk !== null && bDownAsk !== null) {
+							const val = aUpAsk + bDownAsk;
+							const key = `${assetA}_${assetB}_1`;
+							if (!minPricesRef.current[key] || val < minPricesRef.current[key].val) {
+								minPricesRef.current[key] = { val, time: timeStr };
+								changed = true;
+							}
+							if (isWithinFirst10Min) {
+								if (!minPricesForCSVRef.current[key] || val < minPricesForCSVRef.current[key].val) {
+									minPricesForCSVRef.current[key] = { val, time: timeStr };
+								}
+							}
+						}
 
-				// Update single asset stats during first 10 minutes
-				if (isWithinFirst10Min) {
-					updateSingleAssetExtremes(assetA, 'Up', aUpAsk);
-					updateSingleAssetExtremes(assetA, 'Down', aDownAsk);
-					updateSingleAssetExtremes(assetB, 'Up', bUpAsk);
-					updateSingleAssetExtremes(assetB, 'Down', bDownAsk);
-				}
-
-				if (aUpAsk !== null && bDownAsk !== null) {
-					const val = aUpAsk + bDownAsk;
-					const key = `${assetA}_${assetB}_1`;
-					if (!minPricesRef.current[key] || val < minPricesRef.current[key].val) {
-						minPricesRef.current[key] = { val, time: timeStr };
-						changed = true;
-					}
-					// Only update CSV record if within first 10 minutes
-					if (isWithinFirst10Min) {
-						if (!minPricesForCSVRef.current[key] || val < minPricesForCSVRef.current[key].val) {
-							minPricesForCSVRef.current[key] = { val, time: timeStr };
+						if (bUpAsk !== null && aDownAsk !== null) {
+							const val = bUpAsk + aDownAsk;
+							const key = `${assetA}_${assetB}_2`;
+							if (!minPricesRef.current[key] || val < minPricesRef.current[key].val) {
+								minPricesRef.current[key] = { val, time: timeStr };
+								changed = true;
+							}
+							if (isWithinFirst10Min) {
+								if (!minPricesForCSVRef.current[key] || val < minPricesForCSVRef.current[key].val) {
+									minPricesForCSVRef.current[key] = { val, time: timeStr };
+								}
+							}
 						}
 					}
 				}
 
-				if (bUpAsk !== null && aDownAsk !== null) {
-					const val = bUpAsk + aDownAsk;
-					const key = `${assetA}_${assetB}_2`;
-					if (!minPricesRef.current[key] || val < minPricesRef.current[key].val) {
-						minPricesRef.current[key] = { val, time: timeStr };
-						changed = true;
-					}
-					// Only update CSV record if within first 10 minutes
-					if (isWithinFirst10Min) {
-						if (!minPricesForCSVRef.current[key] || val < minPricesForCSVRef.current[key].val) {
-							minPricesForCSVRef.current[key] = { val, time: timeStr };
+				// --- 1h Logic (Background) ---
+				const dataA1h = currentMarkets1h[assetA];
+				const dataB1h = currentMarkets1h[assetB];
+				if (dataA1h && dataB1h) {
+					const idsA1h = extractTokenIds(dataA1h);
+					const idsB1h = extractTokenIds(dataB1h);
+					if (idsA1h && idsB1h) {
+						const aUpAsk = getLowestAsk(currentBooks[idsA1h[0]]);
+						const aDownAsk = getLowestAsk(currentBooks[idsA1h[1]]);
+						const bUpAsk = getLowestAsk(currentBooks[idsB1h[0]]);
+						const bDownAsk = getLowestAsk(currentBooks[idsB1h[1]]);
+
+						if (isWithinFirst55Min1h) {
+							updateSingleAssetExtremes(assetA, 'Up', aUpAsk, singleAssetStats1hRef, true, true);
+							updateSingleAssetExtremes(assetA, 'Down', aDownAsk, singleAssetStats1hRef, true, true);
+							updateSingleAssetExtremes(assetB, 'Up', bUpAsk, singleAssetStats1hRef, true, true);
+							updateSingleAssetExtremes(assetB, 'Down', bDownAsk, singleAssetStats1hRef, true, true);
+
+							if (aUpAsk !== null && bDownAsk !== null) {
+								const val = aUpAsk + bDownAsk;
+								const key = `${assetA}_${assetB}_1`;
+								if (!minPricesForCSV1hRef.current[key] || val < minPricesForCSV1hRef.current[key].val) {
+									minPricesForCSV1hRef.current[key] = { val, time: timeStr };
+								}
+							}
+
+							if (bUpAsk !== null && aDownAsk !== null) {
+								const val = bUpAsk + aDownAsk;
+								const key = `${assetA}_${assetB}_2`;
+								if (!minPricesForCSV1hRef.current[key] || val < minPricesForCSV1hRef.current[key].val) {
+									minPricesForCSV1hRef.current[key] = { val, time: timeStr };
+								}
+							}
 						}
 					}
 				}
@@ -297,7 +350,7 @@ export default function App() {
 			setMinPrices({...minPricesRef.current});
 		}
 
-		// Auto-save to CSV after 10 minutes
+		// Auto-save 15m CSV after 10 minutes
 		if (isAfter10Min && !hasSavedRef.current && Object.keys(minPricesForCSVRef.current).length > 0) {
 			const windowStr = formatWindowTime(windowStart / 1000);
 			const combinationsToSave = [];
@@ -305,7 +358,6 @@ export default function App() {
 				ASSETS.slice(i + 1).forEach(assetB => {
 					const key1 = `${assetA}_${assetB}_1`;
 					const key2 = `${assetA}_${assetB}_2`;
-					
 					if (minPricesForCSVRef.current[key1]) {
 						combinationsToSave.push({
 							pair: `${assetA} & ${assetB}`,
@@ -324,14 +376,47 @@ export default function App() {
 					}
 				});
 			});
-			
 			if (combinationsToSave.length > 0) {
 				appendMinPricesToCSV(windowStr, combinationsToSave, totalRetriesRef.current);
-				// Also save single asset stats
 				if (Object.keys(singleAssetStatsRef.current).length > 0) {
 					appendSingleAssetStatsToCSV(windowStr, singleAssetStatsRef.current, totalRetriesRef.current);
 				}
 				hasSavedRef.current = true;
+			}
+		}
+
+		// Auto-save 1h CSV after 55 minutes (at 56th min)
+		if (isSaveTime1h && !hasSaved1hRef.current && Object.keys(minPricesForCSV1hRef.current).length > 0) {
+			const windowStr = formatWindowTime(windowStart1h / 1000);
+			const combinationsToSave = [];
+			ASSETS.forEach((assetA, i) => {
+				ASSETS.slice(i + 1).forEach(assetB => {
+					const key1 = `${assetA}_${assetB}_1`;
+					const key2 = `${assetA}_${assetB}_2`;
+					if (minPricesForCSV1hRef.current[key1]) {
+						combinationsToSave.push({
+							pair: `${assetA} & ${assetB}`,
+							label: `${assetA} Up + ${assetB} Down`,
+							minVal: minPricesForCSV1hRef.current[key1].val.toFixed(3),
+							time: minPricesForCSV1hRef.current[key1].time
+						});
+					}
+					if (minPricesForCSV1hRef.current[key2]) {
+						combinationsToSave.push({
+							pair: `${assetA} & ${assetB}`,
+							label: `${assetB} Up + ${assetA} Down`,
+							minVal: minPricesForCSV1hRef.current[key2].val.toFixed(3),
+							time: minPricesForCSV1hRef.current[key2].time
+						});
+					}
+				});
+			});
+			if (combinationsToSave.length > 0) {
+				appendMinPricesToCSV1h(windowStr, combinationsToSave, totalRetriesRef.current);
+				if (Object.keys(singleAssetStats1hRef.current).length > 0) {
+					appendSingleAssetStatsToCSV1h(windowStr, singleAssetStats1hRef.current, totalRetriesRef.current);
+				}
+				hasSaved1hRef.current = true;
 			}
 		}
 	};
@@ -358,40 +443,54 @@ export default function App() {
 					setMinPrices({});
 					setMarkets({});
 					marketsRef.current = {};
+					markets1hRef.current = {};
 					minPricesRef.current = {};
 					minPricesForCSVRef.current = {};
+					minPricesForCSV1hRef.current = {};
 					singleAssetStatsRef.current = {};
+					singleAssetStats1hRef.current = {};
 					hasSavedRef.current = false;
+					hasSaved1hRef.current = false;
 					totalRetriesRef.current = 0;
 				} else {
 					totalRetriesRef.current += 1;
 				}
 
 				const timestamp = getCurrent15MinWindowTimestamp();
+				const timestamp1h = getCurrent1hWindowTimestamp();
 				const newMarkets = {};
+				const newMarkets1h = {};
 				const allTokens = [];
 				let lastFetchError = '';
 
 				for (const asset of ASSETS) {
-					const slug = buildMarketSlug(asset, timestamp);
+					// 15m Market
+					const slug15m = buildMarketSlug(asset, timestamp);
 					try {
-						setStatus(`Fetching ${asset} market... ${retryCount > 0 ? `(Retry ${retryCount}/10)` : ''}`);
-						const data = await fetchMarketData(slug);
+						setStatus(`Fetching ${asset} 15m market... ${retryCount > 0 ? `(Retry ${retryCount}/10)` : ''}`);
+						const data = await fetchMarketData(slug15m);
 						newMarkets[asset] = data;
 						const tokens = extractTokenIds(data);
-						if (tokens) {
-							allTokens.push(...tokens);
-						} else {
-							console.warn(`No token IDs in ${asset} market data (Slug: ${slug})`);
-						}
+						if (tokens) allTokens.push(...tokens);
 					} catch (err) {
-						const msg = `Failed to fetch ${asset} market (${slug}): ${err.message}`;
-						console.error(msg);
-						lastFetchError = msg;
+						console.error(`Failed to fetch ${asset} 15m market: ${err.message}`);
+					}
+
+					// 1h Market
+					const slug1h = get1hMarketSlug(asset, timestamp1h);
+					try {
+						setStatus(`Fetching ${asset} 1h market... ${retryCount > 0 ? `(Retry ${retryCount}/10)` : ''}`);
+						const data = await fetchMarketData(slug1h);
+						newMarkets1h[asset] = data;
+						const tokens = extractTokenIds(data);
+						if (tokens) allTokens.push(...tokens);
+					} catch (err) {
+						console.error(`Failed to fetch ${asset} 1h market: ${err.message}`);
 					}
 				}
 
 				setMarkets(newMarkets);
+				markets1hRef.current = newMarkets1h;
 
 				if (allTokens.length === 0) {
 					throw new Error(lastFetchError || 'No token IDs found for any market');
