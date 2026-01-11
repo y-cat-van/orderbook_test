@@ -115,9 +115,17 @@ export function getCurrent1hWindowTimestamp() {
 
 /**
  * Get the 1h market slug based on timestamp
- * Format: {asset}-up-or-down-{month}-{day}-{hour}{am/pm}-et
+ * Format: {full_asset_name}-up-or-down-{month}-{day}-{hour}{am/pm}-et
  */
 export function get1hMarketSlug(asset, timestamp) {
+	const assetMap = {
+		'BTC': 'bitcoin',
+		'ETH': 'ethereum',
+		'SOL': 'solana',
+		'XRP': 'xrp'
+	};
+	const fullAssetName = assetMap[asset] || asset.toLowerCase();
+	
 	const date = new Date(timestamp * 1000);
 	// Convert to America/New_York (ET)
 	const etOptions = {
@@ -138,7 +146,7 @@ export function get1hMarketSlug(asset, timestamp) {
 	}
 	
 	const hourStr = `${hour}${dayPeriod}`; // e.g., 10am
-	return `${asset.toLowerCase()}-up-or-down-${month}-${day}-${hourStr}-et`;
+	return `${fullAssetName}-up-or-down-${month}-${day}-${hourStr}-et`;
 }
 
 /**

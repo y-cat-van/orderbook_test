@@ -184,6 +184,7 @@ export default function App() {
 	const hasSavedRef = useRef(false);
 	const hasSaved1hRef = useRef(false);
 	const totalRetriesRef = useRef(0);
+	const lastWindowStart1hRef = useRef(null);
 
 	// Update marketsRef whenever markets state changes
 	useEffect(() => {
@@ -438,26 +439,32 @@ export default function App() {
 					currentClient.disconnect();
 				}
 
+				const timestamp = getCurrent15MinWindowTimestamp();
+				const timestamp1h = getCurrent1hWindowTimestamp();
+
 				if (retryCount === 0) {
+					// 15m Resets
 					setBooks({});
 					setMinPrices({});
 					setMarkets({});
 					marketsRef.current = {};
-					markets1hRef.current = {};
 					minPricesRef.current = {};
 					minPricesForCSVRef.current = {};
-					minPricesForCSV1hRef.current = {};
 					singleAssetStatsRef.current = {};
-					singleAssetStats1hRef.current = {};
 					hasSavedRef.current = false;
-					hasSaved1hRef.current = false;
 					totalRetriesRef.current = 0;
+
+					// 1h Resets - only on hour change
+					if (lastWindowStart1hRef.current !== timestamp1h) {
+						markets1hRef.current = {};
+						minPricesForCSV1hRef.current = {};
+						singleAssetStats1hRef.current = {};
+						hasSaved1hRef.current = false;
+						lastWindowStart1hRef.current = timestamp1h;
+					}
 				} else {
 					totalRetriesRef.current += 1;
 				}
-
-				const timestamp = getCurrent15MinWindowTimestamp();
-				const timestamp1h = getCurrent1hWindowTimestamp();
 				const newMarkets = {};
 				const newMarkets1h = {};
 				const allTokens = [];
