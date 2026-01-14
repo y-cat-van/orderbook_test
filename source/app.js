@@ -103,6 +103,7 @@ function AssetSection({asset, marketData, books}) {
 	);
 }
 
+/*
 function PriceCombinations({markets, books, minPrices}) {
 	const getLowestAsk = (book) => {
 		const asks = book?.asks || [];
@@ -164,6 +165,7 @@ function PriceCombinations({markets, books, minPrices}) {
 		</Box>
 	);
 }
+*/
 
 export default function App() {
 	const [status, setStatus] = useState('Initializing...');
@@ -529,7 +531,7 @@ export default function App() {
 				/>
 			))}
 
-			<PriceCombinations markets={markets} books={books} minPrices={minPrices} />
+			{/* <PriceCombinations markets={markets} books={books} minPrices={minPrices} /> */}
 		</Box>
 	);
 }
