@@ -174,22 +174,25 @@ export default function App() {
 	const [countdown, setCountdown] = useState('');
 	const [client, setClient] = useState(null);
 
-	const minPricesRef = useRef({});
-	const minPricesForCSVRef = useRef({});
-	const marketsRef = useRef({});
-	const markets1hRef = useRef({});
-	const singleAssetStatsRef = useRef({});
-	const singleAssetStats1hRef = useRef({});
-	const minPricesForCSV1hRef = useRef({});
-	const hasSavedRef = useRef(false);
-	const hasSaved1hRef = useRef(false);
+	// --- 滚动窗口状态池 ---
+	// 结构: { [windowStartTimestamp]: data }
+	const marketsPoolRef = useRef({});            // 15m 市场数据池
+	const markets1hPoolRef = useRef({});          // 1h 市场数据池
+	const minPricesPoolRef = useRef({});          // 15m 组合最小值计算池 (UI显示用)
+	const minPricesForCSVPoolRef = useRef({});    // 15m 组合最小值保存池
+	const minPricesForCSV1hPoolRef = useRef({});  // 1h 组合最小值保存池
+	const singleAssetStatsPoolRef = useRef({});   // 15m 单币对极值池
+	const singleAssetStats1hPoolRef = useRef({}); // 1h 单币对极值池
+	const hasSavedPoolRef = useRef({});           // 已保存窗口记录池 (防止重复写入)
+	
 	const totalRetriesRef = useRef(0);
-	const lastWindowStart1hRef = useRef(null);
+	const activeTokensRef = useRef(new Set());    // 记录当前已订阅的所有 Token
 
-	// Update marketsRef whenever markets state changes
-	useEffect(() => {
-		marketsRef.current = markets;
-	}, [markets]);
+	// --- 核心逻辑说明 ---
+	// 1. initMarkets 每 15 分钟运行一次，负责将“当前”和“下一个”窗口加入池中。
+	// 2. updateMinPrices 随 WebSocket 价格更新触发，遍历池中所有活跃窗口进行并行计算。
+	// 3. 每个窗口独立判断 deadline (10m/55m) 和 saveTime (10m/56m)。
+	// 4. 已保存的旧窗口由 initMarkets 负责从池中清理。
 
 	const updateMinPrices = (currentBooks) => {
 		const getLowestAsk = (book) => {
@@ -199,227 +202,144 @@ export default function App() {
 			return Number(sortedAsks[0].price);
 		};
 
-		const windowStart = getCurrent15MinWindowTimestamp() * 1000;
-		const elapsed = Date.now() - windowStart;
-		const isWithinFirst5Min = elapsed < 5 * 60 * 1000;
-		const isWithinFirst10Min = elapsed < 10 * 60 * 1000;
-		const isAfter10Min = elapsed >= 10 * 60 * 1000;
-
-		const windowStart1h = getCurrent1hWindowTimestamp() * 1000;
-		const elapsed1h = Date.now() - windowStart1h;
-		const isWithinFirst55Min1h = elapsed1h < 55 * 60 * 1000;
-		const isAfter55Min1h = elapsed1h >= 55 * 60 * 1000;
-		const isSaveTime1h = elapsed1h >= 56 * 60 * 1000;
-
 		const now = Date.now();
 		const timeStr = formatOccurrenceTime(now);
+		const current15mTs = getCurrent15MinWindowTimestamp();
 
-		const updateSingleAssetExtremes = (asset, direction, price, statsRef, isMinStatsPeriod, isMaxStatsPeriod) => {
+		// 通用的极值更新逻辑
+		const updateExtremes = (asset, direction, price, statsMap, winTs, isMinStatsPeriod, isMaxStatsPeriod) => {
 			if (price === null) return;
+			if (!statsMap[winTs]) statsMap[winTs] = {};
 			const key = `${asset}_${direction}`;
-			if (!statsRef.current[key]) {
-				statsRef.current[key] = {
-					min: price,
-					minTime: timeStr,
-					max: price,
-					maxTime: timeStr,
-					firstBelow04: price < 0.4 ? timeStr : '',
-					lastBelow04: price < 0.4 ? timeStr : '',
-					firstAbove06: price > 0.6 ? timeStr : '',
-					lastAbove06: price > 0.6 ? timeStr : ''
+			if (!statsMap[winTs][key]) {
+				statsMap[winTs][key] = {
+					min: price, minTime: timeStr, max: price, maxTime: timeStr,
+					firstBelow04: price < 0.4 ? timeStr : '', lastBelow04: price < 0.4 ? timeStr : '',
+					firstAbove06: price > 0.6 ? timeStr : '', lastAbove06: price > 0.6 ? timeStr : ''
 				};
 			} else {
-				const stats = statsRef.current[key];
-				if (isMinStatsPeriod && price < stats.min) {
-					stats.min = price;
-					stats.minTime = timeStr;
-				}
-				if (isMaxStatsPeriod && price > stats.max) {
-					stats.max = price;
-					stats.maxTime = timeStr;
-				}
-
-				// 区间统计 logic
+				const stats = statsMap[winTs][key];
+				if (isMinStatsPeriod && price < stats.min) { stats.min = price; stats.minTime = timeStr; }
+				if (isMaxStatsPeriod && price > stats.max) { stats.max = price; stats.maxTime = timeStr; }
 				if (isMaxStatsPeriod) {
-					if (price < 0.4) {
-						if (!stats.firstBelow04) stats.firstBelow04 = timeStr;
-						stats.lastBelow04 = timeStr;
-					}
-					if (price > 0.6) {
-						if (!stats.firstAbove06) stats.firstAbove06 = timeStr;
-						stats.lastAbove06 = timeStr;
+					if (price < 0.4) { if (!stats.firstBelow04) stats.firstBelow04 = timeStr; stats.lastBelow04 = timeStr; }
+					if (price > 0.6) { if (!stats.firstAbove06) stats.firstAbove06 = timeStr; stats.lastAbove06 = timeStr; }
+				}
+			}
+		};
+
+		// 处理单个窗口的逻辑 (15m 或 1h)
+		const processWindow = (winTs, type) => {
+			const is1h = type === '1h';
+			const markets = is1h ? markets1hPoolRef.current[winTs] : marketsPoolRef.current[winTs];
+			if (!markets) return;
+
+			const winStartMs = winTs * 1000;
+			const elapsed = now - winStartMs;
+			
+			// 计算窗口参数
+			const deadline = is1h ? 55 * 60 * 1000 : 10 * 60 * 1000; // 截止计分时间
+			const saveTime = is1h ? 56 * 60 * 1000 : 10 * 60 * 1000; // 触发保存时间 (15m 也是 10min)
+			const isWarmup = elapsed < 0; // 是否在预热阶段 (T-15min 到 T)
+			const isActive = elapsed >= 0 && elapsed < deadline; // 是否在计分阶段
+			const isSavePeriod = elapsed >= saveTime; // 是否到达保存时间
+
+			if (isWarmup || isActive) {
+				ASSETS.forEach((assetA, i) => {
+					ASSETS.slice(i + 1).forEach(assetB => {
+						const dataA = markets[assetA];
+						const dataB = markets[assetB];
+						if (!dataA || !dataB) return;
+
+						const idsA = extractTokenIds(dataA);
+						const idsB = extractTokenIds(dataB);
+						if (!idsA || !idsB) return;
+
+						const prices = {
+							aUp: getLowestAsk(currentBooks[idsA[0]]),
+							aDown: getLowestAsk(currentBooks[idsA[1]]),
+							bUp: getLowestAsk(currentBooks[idsB[0]]),
+							bDown: getLowestAsk(currentBooks[idsB[1]])
+						};
+
+						// 更新单币对极值
+						const statsPool = is1h ? singleAssetStats1hPoolRef : singleAssetStatsPoolRef;
+						const isMinPeriod = is1h ? true : (elapsed < 5 * 60 * 1000); // 15m 只有前5分钟计最小值
+						updateExtremes(assetA, 'Up', prices.aUp, statsPool.current, winTs, isMinPeriod, true);
+						updateExtremes(assetA, 'Down', prices.aDown, statsPool.current, winTs, isMinPeriod, true);
+						updateExtremes(assetB, 'Up', prices.bUp, statsPool.current, winTs, isMinPeriod, true);
+						updateExtremes(assetB, 'Down', prices.bDown, statsPool.current, winTs, isMinPeriod, true);
+
+						// 更新组合最小值
+						const updateComboMin = (asset1, asset2, p1, p2, suffix, pool) => {
+							if (p1 === null || p2 === null) return;
+							const val = p1 + p2;
+							const key = `${asset1}_${asset2}_${suffix}`;
+							if (!pool.current[winTs]) pool.current[winTs] = {};
+							if (!pool.current[winTs][key] || val < pool.current[winTs][key].val) {
+								pool.current[winTs][key] = { val, time: timeStr };
+								// 如果是当前 UI 窗口，同步更新到 minPricesPool 用于展示
+								if (!is1h && winTs === current15mTs) {
+									if (!minPricesPoolRef.current[winTs]) minPricesPoolRef.current[winTs] = {};
+									minPricesPoolRef.current[winTs][key] = { val, time: timeStr };
+								}
+							}
+						};
+
+						const comboPool = is1h ? minPricesForCSV1hPoolRef : minPricesForCSVPoolRef;
+						updateComboMin(assetA, assetB, prices.aUp, prices.bDown, '1', comboPool);
+						updateComboMin(assetA, assetB, prices.bUp, prices.aDown, '2', comboPool);
+					});
+				});
+
+				// 如果更新了当前 UI 窗口，触发界面渲染
+				if (!is1h && winTs === current15mTs && minPricesPoolRef.current[winTs]) {
+					setMinPrices({ ...minPricesPoolRef.current[winTs] });
+				}
+			}
+
+			// 保存逻辑
+			if (isSavePeriod && !hasSavedPoolRef.current[winTs]) {
+				const comboPool = is1h ? minPricesForCSV1hPoolRef : minPricesForCSVPoolRef;
+				const statsPool = is1h ? singleAssetStats1hPoolRef : singleAssetStatsPoolRef;
+				const saveFn = is1h ? appendMinPricesToCSV1h : appendMinPricesToCSV;
+				const saveStatsFn = is1h ? appendSingleAssetStatsToCSV1h : appendSingleAssetStatsToCSV;
+
+				if (comboPool.current[winTs]) {
+					const windowStr = formatWindowTime(winTs);
+					const combinationsToSave = [];
+					ASSETS.forEach((assetA, i) => {
+						ASSETS.slice(i + 1).forEach(assetB => {
+							['1', '2'].forEach(suffix => {
+								const key = `${assetA}_${assetB}_${suffix}`;
+								const data = comboPool.current[winTs][key];
+								if (data) {
+									combinationsToSave.push({
+										pair: `${assetA} & ${assetB}`,
+										label: suffix === '1' ? `${assetA} Up + ${assetB} Down` : `${assetB} Up + ${assetA} Down`,
+										minVal: data.val.toFixed(3),
+										time: data.time
+									});
+								}
+							});
+						});
+					});
+
+					if (combinationsToSave.length > 0) {
+						saveFn(windowStr, combinationsToSave, totalRetriesRef.current);
+						if (statsPool.current[winTs]) {
+							saveStatsFn(windowStr, statsPool.current[winTs], totalRetriesRef.current);
+						}
+						hasSavedPoolRef.current[winTs] = true;
+						console.log(`Saved ${type} market data for ${windowStr}`);
 					}
 				}
 			}
 		};
 
-		let changed = false;
-		const currentMarkets = marketsRef.current;
-		const currentMarkets1h = markets1hRef.current;
-
-		ASSETS.forEach((assetA, i) => {
-			ASSETS.slice(i + 1).forEach(assetB => {
-				// --- 15m Logic ---
-				const dataA = currentMarkets[assetA];
-				const dataB = currentMarkets[assetB];
-				if (dataA && dataB) {
-					const idsA = extractTokenIds(dataA);
-					const idsB = extractTokenIds(dataB);
-					if (idsA && idsB) {
-						const aUpAsk = getLowestAsk(currentBooks[idsA[0]]);
-						const aDownAsk = getLowestAsk(currentBooks[idsA[1]]);
-						const bUpAsk = getLowestAsk(currentBooks[idsB[0]]);
-						const bDownAsk = getLowestAsk(currentBooks[idsB[1]]);
-
-						if (isWithinFirst10Min) {
-							updateSingleAssetExtremes(assetA, 'Up', aUpAsk, singleAssetStatsRef, isWithinFirst5Min, true);
-							updateSingleAssetExtremes(assetA, 'Down', aDownAsk, singleAssetStatsRef, isWithinFirst5Min, true);
-							updateSingleAssetExtremes(assetB, 'Up', bUpAsk, singleAssetStatsRef, isWithinFirst5Min, true);
-							updateSingleAssetExtremes(assetB, 'Down', bDownAsk, singleAssetStatsRef, isWithinFirst5Min, true);
-						}
-
-						if (aUpAsk !== null && bDownAsk !== null) {
-							const val = aUpAsk + bDownAsk;
-							const key = `${assetA}_${assetB}_1`;
-							if (!minPricesRef.current[key] || val < minPricesRef.current[key].val) {
-								minPricesRef.current[key] = { val, time: timeStr };
-								changed = true;
-							}
-							if (isWithinFirst10Min) {
-								if (!minPricesForCSVRef.current[key] || val < minPricesForCSVRef.current[key].val) {
-									minPricesForCSVRef.current[key] = { val, time: timeStr };
-								}
-							}
-						}
-
-						if (bUpAsk !== null && aDownAsk !== null) {
-							const val = bUpAsk + aDownAsk;
-							const key = `${assetA}_${assetB}_2`;
-							if (!minPricesRef.current[key] || val < minPricesRef.current[key].val) {
-								minPricesRef.current[key] = { val, time: timeStr };
-								changed = true;
-							}
-							if (isWithinFirst10Min) {
-								if (!minPricesForCSVRef.current[key] || val < minPricesForCSVRef.current[key].val) {
-									minPricesForCSVRef.current[key] = { val, time: timeStr };
-								}
-							}
-						}
-					}
-				}
-
-				// --- 1h Logic (Background) ---
-				const dataA1h = currentMarkets1h[assetA];
-				const dataB1h = currentMarkets1h[assetB];
-				if (dataA1h && dataB1h) {
-					const idsA1h = extractTokenIds(dataA1h);
-					const idsB1h = extractTokenIds(dataB1h);
-					if (idsA1h && idsB1h) {
-						const aUpAsk = getLowestAsk(currentBooks[idsA1h[0]]);
-						const aDownAsk = getLowestAsk(currentBooks[idsA1h[1]]);
-						const bUpAsk = getLowestAsk(currentBooks[idsB1h[0]]);
-						const bDownAsk = getLowestAsk(currentBooks[idsB1h[1]]);
-
-						if (isWithinFirst55Min1h) {
-							updateSingleAssetExtremes(assetA, 'Up', aUpAsk, singleAssetStats1hRef, true, true);
-							updateSingleAssetExtremes(assetA, 'Down', aDownAsk, singleAssetStats1hRef, true, true);
-							updateSingleAssetExtremes(assetB, 'Up', bUpAsk, singleAssetStats1hRef, true, true);
-							updateSingleAssetExtremes(assetB, 'Down', bDownAsk, singleAssetStats1hRef, true, true);
-
-							if (aUpAsk !== null && bDownAsk !== null) {
-								const val = aUpAsk + bDownAsk;
-								const key = `${assetA}_${assetB}_1`;
-								if (!minPricesForCSV1hRef.current[key] || val < minPricesForCSV1hRef.current[key].val) {
-									minPricesForCSV1hRef.current[key] = { val, time: timeStr };
-								}
-							}
-
-							if (bUpAsk !== null && aDownAsk !== null) {
-								const val = bUpAsk + aDownAsk;
-								const key = `${assetA}_${assetB}_2`;
-								if (!minPricesForCSV1hRef.current[key] || val < minPricesForCSV1hRef.current[key].val) {
-									minPricesForCSV1hRef.current[key] = { val, time: timeStr };
-								}
-							}
-						}
-					}
-				}
-			});
-		});
-
-		if (changed) {
-			setMinPrices({...minPricesRef.current});
-		}
-
-		// Auto-save 15m CSV after 10 minutes
-		if (isAfter10Min && !hasSavedRef.current && Object.keys(minPricesForCSVRef.current).length > 0) {
-			const windowStr = formatWindowTime(windowStart / 1000);
-			const combinationsToSave = [];
-			ASSETS.forEach((assetA, i) => {
-				ASSETS.slice(i + 1).forEach(assetB => {
-					const key1 = `${assetA}_${assetB}_1`;
-					const key2 = `${assetA}_${assetB}_2`;
-					if (minPricesForCSVRef.current[key1]) {
-						combinationsToSave.push({
-							pair: `${assetA} & ${assetB}`,
-							label: `${assetA} Up + ${assetB} Down`,
-							minVal: minPricesForCSVRef.current[key1].val.toFixed(3),
-							time: minPricesForCSVRef.current[key1].time
-						});
-					}
-					if (minPricesForCSVRef.current[key2]) {
-						combinationsToSave.push({
-							pair: `${assetA} & ${assetB}`,
-							label: `${assetB} Up + ${assetA} Down`,
-							minVal: minPricesForCSVRef.current[key2].val.toFixed(3),
-							time: minPricesForCSVRef.current[key2].time
-						});
-					}
-				});
-			});
-			if (combinationsToSave.length > 0) {
-				appendMinPricesToCSV(windowStr, combinationsToSave, totalRetriesRef.current);
-				if (Object.keys(singleAssetStatsRef.current).length > 0) {
-					appendSingleAssetStatsToCSV(windowStr, singleAssetStatsRef.current, totalRetriesRef.current);
-				}
-				hasSavedRef.current = true;
-			}
-		}
-
-		// Auto-save 1h CSV after 55 minutes (at 56th min)
-		if (isSaveTime1h && !hasSaved1hRef.current && Object.keys(minPricesForCSV1hRef.current).length > 0) {
-			const windowStr = formatWindowTime(windowStart1h / 1000);
-			const combinationsToSave = [];
-			ASSETS.forEach((assetA, i) => {
-				ASSETS.slice(i + 1).forEach(assetB => {
-					const key1 = `${assetA}_${assetB}_1`;
-					const key2 = `${assetA}_${assetB}_2`;
-					if (minPricesForCSV1hRef.current[key1]) {
-						combinationsToSave.push({
-							pair: `${assetA} & ${assetB}`,
-							label: `${assetA} Up + ${assetB} Down`,
-							minVal: minPricesForCSV1hRef.current[key1].val.toFixed(3),
-							time: minPricesForCSV1hRef.current[key1].time
-						});
-					}
-					if (minPricesForCSV1hRef.current[key2]) {
-						combinationsToSave.push({
-							pair: `${assetA} & ${assetB}`,
-							label: `${assetB} Up + ${assetA} Down`,
-							minVal: minPricesForCSV1hRef.current[key2].val.toFixed(3),
-							time: minPricesForCSV1hRef.current[key2].time
-						});
-					}
-				});
-			});
-			if (combinationsToSave.length > 0) {
-				appendMinPricesToCSV1h(windowStr, combinationsToSave, totalRetriesRef.current);
-				if (Object.keys(singleAssetStats1hRef.current).length > 0) {
-					appendSingleAssetStatsToCSV1h(windowStr, singleAssetStats1hRef.current, totalRetriesRef.current);
-				}
-				hasSaved1hRef.current = true;
-			}
-		}
+		// 遍历所有活跃窗口进行处理
+		Object.keys(marketsPoolRef.current).forEach(ts => processWindow(parseInt(ts), '15m'));
+		Object.keys(markets1hPoolRef.current).forEach(ts => processWindow(parseInt(ts), '1h'));
 	};
 
 	// Initialize and switch markets
@@ -433,163 +353,127 @@ export default function App() {
 			try {
 				if (retryTimeout) clearTimeout(retryTimeout);
 				setError(null);
-				
-				// Disconnect previous client
-				if (currentClient) {
-					currentClient.disconnect();
-				}
 
-				const timestamp = getCurrent15MinWindowTimestamp();
-				const timestamp1h = getCurrent1hWindowTimestamp();
+				const nowTs = Math.floor(Date.now() / 1000);
+				const current15m = getCurrent15MinWindowTimestamp();
+				const next15m = getNext15MinWindowTimestamp();
+				const current1h = getCurrent1hWindowTimestamp();
+				const next1h = current1h + 3600;
 
-				if (retryCount === 0) {
-					// 15m Resets
-					setBooks({});
-					setMinPrices({});
-					setMarkets({});
-					marketsRef.current = {};
-					minPricesRef.current = {};
-					minPricesForCSVRef.current = {};
-					singleAssetStatsRef.current = {};
-					hasSavedRef.current = false;
-					totalRetriesRef.current = 0;
-
-					// 1h Resets - only on hour change
-					if (lastWindowStart1hRef.current !== timestamp1h) {
-						markets1hRef.current = {};
-						minPricesForCSV1hRef.current = {};
-						singleAssetStats1hRef.current = {};
-						hasSaved1hRef.current = false;
-						lastWindowStart1hRef.current = timestamp1h;
-					}
-				} else {
-					totalRetriesRef.current += 1;
-				}
-				const newMarkets = {};
-				const newMarkets1h = {};
-				const allTokens = [];
-				let lastFetchError = '';
-
-				for (const asset of ASSETS) {
-					// 15m Market
-					const slug15m = buildMarketSlug(asset, timestamp);
-					try {
-						setStatus(`Fetching ${asset} 15m market... ${retryCount > 0 ? `(Retry ${retryCount}/10)` : ''}`);
-						const data = await fetchMarketData(slug15m);
-						newMarkets[asset] = data;
-						const tokens = extractTokenIds(data);
-						if (tokens) allTokens.push(...tokens);
-					} catch (err) {
-						console.error(`Failed to fetch ${asset} 15m market: ${err.message}`);
-					}
-
-					// 1h Market
-					const slug1h = get1hMarketSlug(asset, timestamp1h);
-					try {
-						setStatus(`Fetching ${asset} 1h market... ${retryCount > 0 ? `(Retry ${retryCount}/10)` : ''}`);
-						const data = await fetchMarketData(slug1h);
-						newMarkets1h[asset] = data;
-						const tokens = extractTokenIds(data);
-						if (tokens) allTokens.push(...tokens);
-					} catch (err) {
-						console.error(`Failed to fetch ${asset} 1h market: ${err.message}`);
-					}
-				}
-
-				setMarkets(newMarkets);
-				markets1hRef.current = newMarkets1h;
-
-				if (allTokens.length === 0) {
-					throw new Error(lastFetchError || 'No token IDs found for any market');
-				}
-
-				setStatus('Connecting to WebSocket...');
-
-				// Create WebSocket client
-				currentClient = new ClobMarketClient();
-				setClient(currentClient);
-
-				currentClient.on('connected', () => {
-					setStatus('Connected - Subscribing...');
-					currentClient.subscribe(allTokens);
-				});
-
-				currentClient.on('disconnected', () => {
-					setStatus('Disconnected');
-				});
-
-				currentClient.on('error', err => {
-					const msg = `WebSocket error: ${err.message}`;
-					setStatus(`${msg}. Retrying in 5s...`);
-					totalRetriesRef.current += 1;
-					if (retryTimeout) clearTimeout(retryTimeout);
-					retryTimeout = setTimeout(() => initMarkets(0), 5000);
-				});
-
-				currentClient.onBook(event => {
-					setStatus('Receiving orderbook updates');
-					setBooks(prev => {
-						const next = {
-							...prev,
-							[event.asset_id]: {
-								bids: event.bids || [],
-								asks: event.asks || [],
-							},
-						};
-						updateMinPrices(next);
-						return next;
+				// 1. 清理已保存且过期的窗口 (内存管理)
+				[marketsPoolRef, markets1hPoolRef, minPricesPoolRef, minPricesForCSVPoolRef, 
+				 minPricesForCSV1hPoolRef, singleAssetStatsPoolRef, singleAssetStats1hPoolRef].forEach(pool => {
+					Object.keys(pool.current).forEach(ts => {
+						const tsNum = parseInt(ts);
+						// 如果窗口已保存，且时间早于当前活跃窗口的预热起点，则删除
+						if (hasSavedPoolRef.current[ts] && tsNum < current15m - 900) {
+							delete pool.current[ts];
+						}
 					});
 				});
 
-				currentClient.onPriceChange(event => {
-					setBooks(prev => {
-						const current = prev[event.asset_id] || {bids: [], asks: []};
-						let newBids = [...current.bids];
-						let newAsks = [...current.asks];
+				// 2. 准备需要加载的窗口列表 (15m 和 1h)
+				const windowsToLoad = [
+					{ ts: current15m, type: '15m' },
+					{ ts: next15m, type: '15m' },
+					{ ts: current1h, type: '1h' },
+					{ ts: next1h, type: '1h' }
+				];
 
-						for (const change of event.price_changes || []) {
-							const side = change.side === 'BUY' ? 'bids' : 'asks';
-							let orders = side === 'bids' ? newBids : newAsks;
-
-							const idx = orders.findIndex(o => o.price === change.price);
-
-							if (Number(change.size) === 0) {
-								if (idx !== -1) orders.splice(idx, 1);
-							} else if (idx !== -1) {
-								orders[idx] = {price: change.price, size: change.size};
-							} else {
-								orders.push({price: change.price, size: change.size});
+				const newTokens = [];
+				for (const win of windowsToLoad) {
+					const pool = win.type === '15m' ? marketsPoolRef : markets1hPoolRef;
+					// 如果该窗口还没在池子里，或者数据不全，则加载
+					if (!pool.current[win.ts]) {
+						pool.current[win.ts] = {};
+						for (const asset of ASSETS) {
+							const slug = win.type === '15m' 
+								? buildMarketSlug(asset, win.ts) 
+								: get1hMarketSlug(asset, win.ts);
+							try {
+								setStatus(`Fetching ${asset} ${win.ts} ${win.type}...`);
+								const data = await fetchMarketData(slug);
+								pool.current[win.ts][asset] = data;
+								const tokens = extractTokenIds(data);
+								if (tokens) {
+									tokens.forEach(id => {
+										if (!activeTokensRef.current.has(id)) {
+											newTokens.push(id);
+											activeTokensRef.current.add(id);
+										}
+									});
+								}
+							} catch (err) {
+								console.error(`Fetch failed for ${slug}: ${err.message}`);
 							}
 						}
+					}
+				}
 
-						const next = {
-							...prev,
-							[event.asset_id]: {
-								bids: newBids,
-								asks: newAsks,
-							},
-						};
-						updateMinPrices(next);
-						return next;
+				// 3. 更新 UI 显示用的当前市场
+				setMarkets(marketsPoolRef.current[current15m] || {});
+
+				// 4. WebSocket 连接管理
+				if (!currentClient) {
+					setStatus('Connecting to WebSocket...');
+					currentClient = new ClobMarketClient();
+					setClient(currentClient);
+
+					currentClient.on('connected', () => {
+						setStatus('Connected - Subscribing...');
+						if (activeTokensRef.current.size > 0) {
+							currentClient.subscribe(Array.from(activeTokensRef.current));
+						}
 					});
-				});
 
-				await currentClient.connect();
+					currentClient.on('error', err => {
+						setStatus(`WebSocket error: ${err.message}. Retrying...`);
+						setTimeout(() => initMarkets(0), 5000);
+					});
 
-				// Schedule switch to next window
+					currentClient.onBook(event => {
+						setBooks(prev => {
+							const next = { ...prev, [event.asset_id]: { bids: event.bids || [], asks: event.asks || [] } };
+							updateMinPrices(next);
+							return next;
+						});
+					});
+
+					currentClient.onPriceChange(event => {
+						setBooks(prev => {
+							const current = prev[event.asset_id] || {bids: [], asks: []};
+							let newBids = [...current.bids];
+							let newAsks = [...current.asks];
+							for (const change of event.price_changes || []) {
+								const side = change.side === 'BUY' ? 'bids' : 'asks';
+								let orders = side === 'bids' ? newBids : newAsks;
+								const idx = orders.findIndex(o => o.price === change.price);
+								if (Number(change.size) === 0) { if (idx !== -1) orders.splice(idx, 1); }
+								else if (idx !== -1) { orders[idx] = {price: change.price, size: change.size}; }
+								else { orders.push({price: change.price, size: change.size}); }
+							}
+							const next = { ...prev, [event.asset_id]: { bids: newBids, asks: newAsks } };
+							updateMinPrices(next);
+							return next;
+						});
+					});
+
+					await currentClient.connect();
+				} else if (newTokens.length > 0) {
+					// 已有连接，追加订阅新 Token
+					setStatus(`Subscribing to ${newTokens.length} new tokens...`);
+					currentClient.subscribe(newTokens);
+				}
+
+				// 5. 调度下一次检查 (15分钟后)
 				const msUntilNext = getMsUntilNextWindow();
 				if (switchTimeout) clearTimeout(switchTimeout);
-				switchTimeout = setTimeout(() => {
-					initMarkets();
-				}, msUntilNext + 2000);
+				switchTimeout = setTimeout(() => initMarkets(), msUntilNext + 2000);
+
 			} catch (err) {
+				console.error('initMarkets error:', err);
 				if (retryCount < 10) {
-					const nextRetryDelay = 5000;
-					setStatus(`Error: ${err.message}. Retrying in 5s... (${retryCount + 1}/10)`);
-					retryTimeout = setTimeout(() => initMarkets(retryCount + 1), nextRetryDelay);
-				} else {
-					setError(`Fatal Error: ${err.message}. Max retries reached.`);
-					setStatus('Stopped due to errors');
+					retryTimeout = setTimeout(() => initMarkets(retryCount + 1), 5000);
 				}
 			}
 		}
