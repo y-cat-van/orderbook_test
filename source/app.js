@@ -214,18 +214,27 @@ export default function App() {
 			if (!statsMap[winTs]) statsMap[winTs] = {};
 			const key = `${asset}_${direction}`;
 			if (!statsMap[winTs][key]) {
+				const isBelow04 = price <= 0.4;
 				statsMap[winTs][key] = {
 					min: price, minTime: timeStr, max: price, maxTime: timeStr,
-					firstBelow04: price < 0.4 ? timeStr : '', lastBelow04: price < 0.4 ? timeStr : '',
-					firstAbove06: price > 0.6 ? timeStr : '', lastAbove06: price > 0.6 ? timeStr : ''
+					firstBelow04: isBelow04 ? timeStr : '', 
+					lastBelow04: isBelow04 ? timeStr : '',
+					hasBeenBelow04: isBelow04,
+					firstBackAbove045: ''
 				};
 			} else {
 				const stats = statsMap[winTs][key];
 				if (isMinStatsPeriod && price < stats.min) { stats.min = price; stats.minTime = timeStr; }
 				if (isMaxStatsPeriod && price > stats.max) { stats.max = price; stats.maxTime = timeStr; }
 				if (isMaxStatsPeriod) {
-					if (price < 0.4) { if (!stats.firstBelow04) stats.firstBelow04 = timeStr; stats.lastBelow04 = timeStr; }
-					if (price > 0.6) { if (!stats.firstAbove06) stats.firstAbove06 = timeStr; stats.lastAbove06 = timeStr; }
+					if (price <= 0.4) { 
+						if (!stats.firstBelow04) stats.firstBelow04 = timeStr; 
+						stats.lastBelow04 = timeStr; 
+						stats.hasBeenBelow04 = true;
+					}
+					if (price >= 0.45 && stats.hasBeenBelow04 && !stats.firstBackAbove045) {
+						stats.firstBackAbove045 = timeStr;
+					}
 				}
 			}
 		};
