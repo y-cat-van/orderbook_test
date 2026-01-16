@@ -17,6 +17,7 @@ import {
 	get1hMarketSlug,
 	appendMinPricesToCSV1h,
 	appendSingleAssetStatsToCSV1h,
+	appendStrategyAnalysisToCSV,
 } from './utils.js';
 
 const ASSETS = ['BTC', 'ETH', 'SOL', 'XRP'];
@@ -187,6 +188,10 @@ export default function App() {
 	const singleAssetStats1hPoolRef = useRef({}); // 1h 单币对极值池
 	const hasSavedPoolRef = useRef({});           // 已保存窗口记录池 (防止重复写入)
 	
+	// --- 策略分析相关 ---
+	const priceWindowsRef = useRef({});           // { [key]: [{price, ts}, ...] } 15s 滑动窗口
+	const strategyEventsRef = useRef({});         // { [key]: { dropStartPrice, ... } } 正在追踪的事件
+	
 	const totalRetriesRef = useRef(0);
 	const activeTokensRef = useRef(new Set());    // 记录当前已订阅的所有 Token
 
@@ -234,6 +239,72 @@ export default function App() {
 					}
 					if (price >= 0.45 && stats.hasBeenBelow04 && !stats.firstBackAbove045) {
 						stats.firstBackAbove045 = timeStr;
+					}
+				}
+			}
+
+			// --- 策略分析逻辑 (15s跌0.08, 回升0.05) ---
+			// 只在 15m 活跃窗口且不在 3 分钟禁区内进行新的检测
+			// 增加 winTs === current15mTs 判定，确保每个价格更新只被处理一次
+			const winStartMs = winTs * 1000;
+			const is15m = !is1h;
+			const windowDuration = is15m ? 15 * 60 * 1000 : 60 * 60 * 1000;
+			const isBufferZone = (now - winStartMs) > (windowDuration - 3 * 60 * 1000);
+
+			if (is15m && winTs === current15mTs) {
+				const strategyKey = `${asset}_${direction}`;
+				
+				// 1. 更新 15s 滑动窗口
+				if (!priceWindowsRef.current[strategyKey]) priceWindowsRef.current[strategyKey] = [];
+				const window = priceWindowsRef.current[strategyKey];
+				window.push({ price, ts: now });
+				// 移除 15s 之前的数据
+				while (window.length > 0 && window[0].ts < now - 15000) {
+					window.shift();
+				}
+
+				// 2. 如果已经在追踪事件，检查回升
+				const pendingEvent = strategyEventsRef.current[strategyKey];
+				if (pendingEvent) {
+					// 检查是否进一步下跌 0.05 (反弹失败)
+					if (price <= pendingEvent.triggerPrice - 0.05) {
+						delete strategyEventsRef.current[strategyKey];
+						return; // 立即结束，等待下一轮急跌
+					}
+
+					// 持续更新急跌后的最低点
+					if (price < pendingEvent.dropEndPrice) {
+						pendingEvent.dropEndPrice = price;
+						pendingEvent.dropEndTime = timeStr;
+					}
+					// 检查回升是否达标 (0.05)
+					if (price - pendingEvent.dropEndPrice >= 0.05) {
+						appendStrategyAnalysisToCSV({
+							...pendingEvent,
+							reboundTime: timeStr,
+							reboundPrice: price
+						});
+						delete strategyEventsRef.current[strategyKey]; // 完成记录
+					}
+					// 如果进入了 3 分钟禁区，强制结束当前追踪（但不一定记录，因为回升未达标）
+					if (isBufferZone) {
+						delete strategyEventsRef.current[strategyKey];
+					}
+				} 
+				// 3. 如果不在追踪且不在禁区，检查新的急跌
+				else if (!isBufferZone && window.length > 1) {
+					const maxPriceObj = window.reduce((max, p) => p.price > max.price ? p : max, window[0]);
+					if (maxPriceObj.price - price > 0.08) {
+						strategyEventsRef.current[strategyKey] = {
+							windowStart: formatWindowTime(winTs),
+							asset,
+							direction,
+							dropStartTime: formatOccurrenceTime(maxPriceObj.ts),
+							dropStartPrice: maxPriceObj.price,
+							triggerPrice: price, // 记录触发时的价格，用于判断进一步下跌
+							dropEndTime: timeStr,
+							dropEndPrice: price
+						};
 					}
 				}
 			}

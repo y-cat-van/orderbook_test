@@ -171,6 +171,21 @@ export function appendMinPricesToCSV(windowStart, combinations, retryCount = 0) 
 }
 
 /**
+ * Append strategy analysis events to a CSV file
+ */
+export function appendStrategyAnalysisToCSV(event) {
+	const filePath = path.join(process.cwd(), 'strategy_analysis.csv');
+	const fileExists = fs.existsSync(filePath);
+
+	if (!fileExists) {
+		fs.writeFileSync(filePath, 'window_start,asset,direction,drop_start_time,drop_start_price,drop_end_time,drop_end_price,rebound_time,rebound_price\n');
+	}
+
+	const row = `"${event.windowStart}","${event.asset}","${event.direction}","${event.dropStartTime}","${event.dropStartPrice}","${event.dropEndTime}","${event.dropEndPrice}","${event.reboundTime}","${event.reboundPrice}"`;
+	fs.appendFileSync(filePath, row + '\n');
+}
+
+/**
  * Append single asset extreme prices to a CSV file
  */
 export function appendSingleAssetStatsToCSV(windowStart, stats, retryCount = 0) {
