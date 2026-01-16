@@ -214,7 +214,7 @@ export default function App() {
 		const current15mTs = getCurrent15MinWindowTimestamp();
 
 		// 通用的极值更新逻辑
-		const updateExtremes = (asset, direction, price, statsMap, winTs, isMinStatsPeriod, isMaxStatsPeriod) => {
+		const updateExtremes = (asset, direction, price, statsMap, winTs, isMinStatsPeriod, isMaxStatsPeriod, is1h) => {
 			if (price === null) return;
 			if (!statsMap[winTs]) statsMap[winTs] = {};
 			const key = `${asset}_${direction}`;
@@ -347,10 +347,10 @@ export default function App() {
 						// 更新单币对极值
 						const statsPool = is1h ? singleAssetStats1hPoolRef : singleAssetStatsPoolRef;
 						const isMinPeriod = is1h ? true : (elapsed < 5 * 60 * 1000); // 15m 只有前5分钟计最小值
-						updateExtremes(assetA, 'Up', prices.aUp, statsPool.current, winTs, isMinPeriod, true);
-						updateExtremes(assetA, 'Down', prices.aDown, statsPool.current, winTs, isMinPeriod, true);
-						updateExtremes(assetB, 'Up', prices.bUp, statsPool.current, winTs, isMinPeriod, true);
-						updateExtremes(assetB, 'Down', prices.bDown, statsPool.current, winTs, isMinPeriod, true);
+						updateExtremes(assetA, 'Up', prices.aUp, statsPool.current, winTs, isMinPeriod, true, is1h);
+						updateExtremes(assetA, 'Down', prices.aDown, statsPool.current, winTs, isMinPeriod, true, is1h);
+						updateExtremes(assetB, 'Up', prices.bUp, statsPool.current, winTs, isMinPeriod, true, is1h);
+						updateExtremes(assetB, 'Down', prices.bDown, statsPool.current, winTs, isMinPeriod, true, is1h);
 
 						// 更新组合最小值
 						const updateComboMin = (asset1, asset2, p1, p2, suffix, pool) => {
