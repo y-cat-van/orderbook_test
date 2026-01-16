@@ -269,26 +269,26 @@ export default function App() {
 					// 检查是否进一步下跌 0.05 (反弹失败)
 					if (price <= pendingEvent.triggerPrice - 0.05) {
 						delete strategyEventsRef.current[strategyKey];
-						return; // 立即结束，等待下一轮急跌
-					}
-
-					// 持续更新急跌后的最低点
-					if (price < pendingEvent.dropEndPrice) {
-						pendingEvent.dropEndPrice = price;
-						pendingEvent.dropEndTime = timeStr;
-					}
-					// 检查回升是否达标 (0.05)
-					if (price - pendingEvent.dropEndPrice >= 0.05) {
-						appendStrategyAnalysisToCSV({
-							...pendingEvent,
-							reboundTime: timeStr,
-							reboundPrice: price
-						});
-						delete strategyEventsRef.current[strategyKey]; // 完成记录
-					}
-					// 如果进入了 3 分钟禁区，强制结束当前追踪（但不一定记录，因为回升未达标）
-					if (isBufferZone) {
-						delete strategyEventsRef.current[strategyKey];
+						// 注意：这里不要 return，否则会跳过后续的组合最小值等逻辑更新
+					} else {
+						// 持续更新急跌后的最低点
+						if (price < pendingEvent.dropEndPrice) {
+							pendingEvent.dropEndPrice = price;
+							pendingEvent.dropEndTime = timeStr;
+						}
+						// 检查回升是否达标 (0.05)
+						if (price - pendingEvent.dropEndPrice >= 0.05) {
+							appendStrategyAnalysisToCSV({
+								...pendingEvent,
+								reboundTime: timeStr,
+								reboundPrice: price
+							});
+							delete strategyEventsRef.current[strategyKey]; // 完成记录
+						}
+						// 如果进入了 3 分钟禁区，强制结束当前追踪（但不一定记录，因为回升未达标）
+						if (isBufferZone) {
+							delete strategyEventsRef.current[strategyKey];
+						}
 					}
 				} 
 				// 3. 如果不在追踪且不在禁区，检查新的急跌
