@@ -181,6 +181,7 @@ export default function App() {
 	// 结构: { [windowStartTimestamp]: data }
 	const marketsPoolRef = useRef({});            // 15m 市场数据池
 	const markets1hPoolRef = useRef({});          // 1h 市场数据池
+	const lastUpdateRef = useRef(0); // 用于节流
 	const minPricesPoolRef = useRef({});          // 15m 组合最小值计算池 (UI显示用)
 	const minPricesForCSVPoolRef = useRef({});    // 15m 组合最小值保存池
 	const minPricesForCSV1hPoolRef = useRef({});  // 1h 组合最小值保存池
@@ -202,6 +203,11 @@ export default function App() {
 	// 4. 已保存的旧窗口由 initMarkets 负责从池中清理。
 
 	const updateMinPrices = (currentBooks) => {
+		const now = Date.now();
+		// 节流：控制计算和渲染频率，防止高频更新导致界面卡死 (每 100ms 最多更新一次)
+		if (now - lastUpdateRef.current < 100) return;
+		lastUpdateRef.current = now;
+
 		const getLowestAsk = (book) => {
 			const asks = book?.asks || [];
 			if (asks.length === 0) return null;
@@ -209,7 +215,6 @@ export default function App() {
 			return Number(sortedAsks[0].price);
 		};
 
-		const now = Date.now();
 		const timeStr = formatOccurrenceTime(now);
 		const current15mTs = getCurrent15MinWindowTimestamp();
 
@@ -327,6 +332,24 @@ export default function App() {
 			const isSavePeriod = elapsed >= saveTime; // 是否到达保存时间
 
 			if (isWarmup || isActive) {
+				// 1. 首先更新单币对极值和策略分析 (每个币种只更新一次)
+				const statsPool = is1h ? singleAssetStats1hPoolRef : singleAssetStatsPoolRef;
+				const isMinPeriod = is1h ? true : (elapsed < 5 * 60 * 1000);
+				
+				ASSETS.forEach(asset => {
+					const data = markets[asset];
+					if (!data) return;
+					const ids = extractTokenIds(data);
+					if (!ids) return;
+
+					const pUp = getLowestAsk(currentBooks[ids[0]]);
+					const pDown = getLowestAsk(currentBooks[ids[1]]);
+					
+					updateExtremes(asset, 'Up', pUp, statsPool.current, winTs, isMinPeriod, true, is1h);
+					updateExtremes(asset, 'Down', pDown, statsPool.current, winTs, isMinPeriod, true, is1h);
+				});
+
+				// 2. 然后更新组合最小值
 				ASSETS.forEach((assetA, i) => {
 					ASSETS.slice(i + 1).forEach(assetB => {
 						const dataA = markets[assetA];
@@ -344,15 +367,6 @@ export default function App() {
 							bDown: getLowestAsk(currentBooks[idsB[1]])
 						};
 
-						// 更新单币对极值
-						const statsPool = is1h ? singleAssetStats1hPoolRef : singleAssetStatsPoolRef;
-						const isMinPeriod = is1h ? true : (elapsed < 5 * 60 * 1000); // 15m 只有前5分钟计最小值
-						updateExtremes(assetA, 'Up', prices.aUp, statsPool.current, winTs, isMinPeriod, true, is1h);
-						updateExtremes(assetA, 'Down', prices.aDown, statsPool.current, winTs, isMinPeriod, true, is1h);
-						updateExtremes(assetB, 'Up', prices.bUp, statsPool.current, winTs, isMinPeriod, true, is1h);
-						updateExtremes(assetB, 'Down', prices.bDown, statsPool.current, winTs, isMinPeriod, true, is1h);
-
-						// 更新组合最小值
 						const updateComboMin = (asset1, asset2, p1, p2, suffix, pool) => {
 							if (p1 === null || p2 === null) return;
 							const val = p1 + p2;
@@ -373,11 +387,6 @@ export default function App() {
 						updateComboMin(assetA, assetB, prices.bUp, prices.aDown, '2', comboPool);
 					});
 				});
-
-				// 如果更新了当前 UI 窗口，触发界面渲染
-				if (!is1h && winTs === current15mTs && minPricesPoolRef.current[winTs]) {
-					setMinPrices({ ...minPricesPoolRef.current[winTs] });
-				}
 			}
 
 			// 保存逻辑
@@ -422,6 +431,11 @@ export default function App() {
 		// 遍历所有活跃窗口进行处理
 		Object.keys(marketsPoolRef.current).forEach(ts => processWindow(parseInt(ts), '15m'));
 		Object.keys(markets1hPoolRef.current).forEach(ts => processWindow(parseInt(ts), '1h'));
+
+		// 统一触发一次界面渲染
+		if (minPricesPoolRef.current[current15mTs]) {
+			setMinPrices({ ...minPricesPoolRef.current[current15mTs] });
+		}
 	};
 
 	// Initialize and switch markets
