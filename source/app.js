@@ -219,8 +219,8 @@ export default function App() {
 		const current15mTs = getCurrent15MinWindowTimestamp();
 
 		// 通用的策略分析逻辑
-		const updateStrategy = (asset, direction, price, winTs, is1h, isStopBuyPhase, isLiquidationPhase) => {
-			if (price === null || is1h) return; // 策略仅针对 15m 窗口
+		const updateStrategy = (asset, direction, price, winTs, isStopBuyPhase, isLiquidationPhase) => {
+			if (price === null) return;
 
 			const strategyKey = `${asset}_${direction}`;
 			const pendingEvent = strategyEventsRef.current[strategyKey];
@@ -274,7 +274,7 @@ export default function App() {
 		};
 
 		// 处理单个窗口的逻辑 (15m 或 1h)
-		const processWindow = (winTs, type) => {
+		const processWindow = (winTs, type, runStrategy) => {
 			const is1h = type === '1h';
 			const markets = is1h ? markets1hPoolRef.current[winTs] : marketsPoolRef.current[winTs];
 			if (!markets) return;
@@ -300,9 +300,11 @@ export default function App() {
 					const pUp = getLowestAsk(currentBooks[ids[0]]);
 					const pDown = getLowestAsk(currentBooks[ids[1]]);
 					
-					// 执行新策略逻辑
-					updateStrategy(asset, 'Up', pUp, winTs, is1h, isStopBuyPhase, isLiquidationPhase);
-					updateStrategy(asset, 'Down', pDown, winTs, is1h, isStopBuyPhase, isLiquidationPhase);
+					// 执行新策略逻辑 (仅在指定窗口运行)
+					if (runStrategy) {
+						updateStrategy(asset, 'Up', pUp, winTs, isStopBuyPhase, isLiquidationPhase);
+						updateStrategy(asset, 'Down', pDown, winTs, isStopBuyPhase, isLiquidationPhase);
+					}
 
 					/* 暂时注释掉原有的极值记录功能
 					const statsPool = is1h ? singleAssetStats1hPoolRef : singleAssetStatsPoolRef;
@@ -361,8 +363,19 @@ export default function App() {
 		};
 
 		// 遍历所有活跃窗口进行处理
-		Object.keys(marketsPoolRef.current).forEach(ts => processWindow(parseInt(ts), '15m'));
-		Object.keys(markets1hPoolRef.current).forEach(ts => processWindow(parseInt(ts), '1h'));
+		const active15mWindows = Object.keys(marketsPoolRef.current)
+			.map(Number)
+			.sort((a, b) => a - b);
+		
+		// 策略逻辑只针对当前最活跃的 15m 窗口运行一次
+		// 这样可以避免多个窗口（如当前和下一个）并行处理时导致策略重复触发
+		const primaryWinTs = active15mWindows.find(ts => {
+			const elapsed = now - ts * 1000;
+			return elapsed >= 0 && elapsed < 15 * 60 * 1000;
+		}) || active15mWindows[0];
+
+		active15mWindows.forEach(ts => processWindow(ts, '15m', ts === primaryWinTs));
+		Object.keys(markets1hPoolRef.current).forEach(ts => processWindow(parseInt(ts), '1h', false));
 
 		// 统一触发一次界面渲染
 		if (minPricesPoolRef.current[current15mTs]) {
