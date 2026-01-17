@@ -218,106 +218,57 @@ export default function App() {
 		const timeStr = formatOccurrenceTime(now);
 		const current15mTs = getCurrent15MinWindowTimestamp();
 
-		// 通用的极值更新逻辑
-		const updateExtremes = (asset, direction, price, statsMap, winTs, isMinStatsPeriod, isMaxStatsPeriod, is1h) => {
-			if (price === null) return;
-			if (!statsMap[winTs]) statsMap[winTs] = {};
-			const key = `${asset}_${direction}`;
-			if (!statsMap[winTs][key]) {
-				const isBelow04 = price <= 0.4;
-				statsMap[winTs][key] = {
-					min: price, minTime: timeStr, max: price, maxTime: timeStr,
-					firstBelow04: isBelow04 ? timeStr : '', 
-					lastBelow04: isBelow04 ? timeStr : '',
-					hasBeenBelow04: isBelow04,
-					firstBackAbove045: ''
-				};
-			} else {
-				const stats = statsMap[winTs][key];
-				if (isMinStatsPeriod && price < stats.min) { stats.min = price; stats.minTime = timeStr; }
-				if (isMaxStatsPeriod && price > stats.max) { stats.max = price; stats.maxTime = timeStr; }
-				if (isMaxStatsPeriod) {
-					if (price <= 0.4) { 
-						if (!stats.firstBelow04) stats.firstBelow04 = timeStr; 
-						stats.lastBelow04 = timeStr; 
-						stats.hasBeenBelow04 = true;
-					}
-					if (price >= 0.45 && stats.hasBeenBelow04 && !stats.firstBackAbove045) {
-						stats.firstBackAbove045 = timeStr;
-					}
+		// 通用的策略分析逻辑
+		const updateStrategy = (asset, direction, price, winTs, is1h, isStopBuyPhase, isLiquidationPhase) => {
+			if (price === null || is1h) return; // 策略仅针对 15m 窗口
+
+			const strategyKey = `${asset}_${direction}`;
+			const pendingEvent = strategyEventsRef.current[strategyKey];
+
+			// 1. 如果处于“探测卖出机会阶段” (状态 B)
+			if (pendingEvent) {
+				const isTakeProfit = price >= pendingEvent.buyPrice + 0.05;
+				const isStopLoss = price <= pendingEvent.buyPrice - 0.05;
+
+				if (isTakeProfit || isStopLoss || isLiquidationPhase) {
+					appendStrategyAnalysisToCSV({
+						...pendingEvent,
+						sellTime: timeStr,
+						sellPrice: price,
+						status: isLiquidationPhase ? 'FORCE_CLEAR' : (isTakeProfit ? 'TAKE_PROFIT' : 'STOP_LOSS')
+					});
+					delete strategyEventsRef.current[strategyKey]; // 回到状态 A
 				}
+				return;
 			}
 
-			// --- 策略分析逻辑 (15s跌0.08, 回升0.05) ---
-			// 只在 15m 活跃窗口且不在 3 分钟禁区内进行新的检测
-			// 增加 winTs === current15mTs 判定，确保每个价格更新只被处理一次
-			const winStartMs = winTs * 1000;
-			const is15m = !is1h;
-			const windowDuration = is15m ? 15 * 60 * 1000 : 60 * 60 * 1000;
-			const isBufferZone = (now - winStartMs) > (windowDuration - 3 * 60 * 1000);
+			// 2. 如果处于“探测买入机会阶段” (状态 A)
+			// 如果是“停止买入阶段”或“清仓阶段”，不再探测新的闪崩
+			if (isStopBuyPhase || isLiquidationPhase) return;
 
-			if (is15m && winTs === current15mTs) {
-				const strategyKey = `${asset}_${direction}`;
-				
-				// 1. 更新 15s 滑动窗口
-				if (!priceWindowsRef.current[strategyKey]) priceWindowsRef.current[strategyKey] = [];
-				const window = priceWindowsRef.current[strategyKey];
-				window.push({ price, ts: now });
-				// 移除 15s 之前的数据
-				while (window.length > 0 && window[0].ts < now - 15000) {
-					window.shift();
-				}
+			// 更新 10s 滑动窗口
+			if (!priceWindowsRef.current[strategyKey]) priceWindowsRef.current[strategyKey] = [];
+			const window = priceWindowsRef.current[strategyKey];
+			window.push({ price, ts: now });
+			while (window.length > 0 && window[0].ts < now - 10000) {
+				window.shift();
+			}
 
-				// 2. 如果已经在追踪事件，检查回升
-				const pendingEvent = strategyEventsRef.current[strategyKey];
-				if (pendingEvent) {
-					// 检查是否进一步下跌 0.05 (反弹失败/止损)
-					if (price <= pendingEvent.triggerPrice - 0.05) {
-						appendStrategyAnalysisToCSV({
-							...pendingEvent,
-							reboundTime: timeStr,
-							reboundPrice: price,
-							status: 'STOP_LOSS'
-						});
-						delete strategyEventsRef.current[strategyKey];
-						// 注意：这里不要 return，否则会跳过后续的组合最小值等逻辑更新
-					} else {
-						// 持续更新急跌后的最低点
-						if (price < pendingEvent.dropEndPrice) {
-							pendingEvent.dropEndPrice = price;
-							pendingEvent.dropEndTime = timeStr;
-						}
-						// 检查回升是否达标 (0.05)
-						if (price - pendingEvent.dropEndPrice >= 0.05) {
-							appendStrategyAnalysisToCSV({
-								...pendingEvent,
-								reboundTime: timeStr,
-								reboundPrice: price,
-								status: 'SUCCESS'
-							});
-							delete strategyEventsRef.current[strategyKey]; // 完成记录
-						}
-						// 如果进入了 3 分钟禁区，强制结束当前追踪（但不一定记录，因为回升未达标）
-						if (isBufferZone) {
-							delete strategyEventsRef.current[strategyKey];
-						}
-					}
-				} 
-				// 3. 如果不在追踪且不在禁区，检查新的急跌
-				else if (!isBufferZone && window.length > 1) {
-					const maxPriceObj = window.reduce((max, p) => p.price > max.price ? p : max, window[0]);
-					if (maxPriceObj.price - price > 0.08) {
-						strategyEventsRef.current[strategyKey] = {
-							windowStart: formatWindowTime(winTs),
-							asset,
-							direction,
-							dropStartTime: formatOccurrenceTime(maxPriceObj.ts),
-							dropStartPrice: maxPriceObj.price,
-							triggerPrice: price, // 记录触发时的价格，用于判断进一步下跌
-							dropEndTime: timeStr,
-							dropEndPrice: price
-						};
-					}
+			// 检测闪崩 (10s内跌够0.08)
+			if (window.length > 1) {
+				const maxPriceObj = window.reduce((max, p) => p.price > max.price ? p : max, window[0]);
+				if (maxPriceObj.price - price >= 0.08) {
+					strategyEventsRef.current[strategyKey] = {
+						windowStart: formatWindowTime(winTs),
+						asset,
+						direction,
+						anchorTime: formatOccurrenceTime(maxPriceObj.ts),
+						anchorPrice: maxPriceObj.price,
+						buyTime: timeStr,
+						buyPrice: price
+					};
+					// 进入状态 B 后，清除窗口缓存，避免同一波下跌触发多次
+					priceWindowsRef.current[strategyKey] = [];
 				}
 			}
 		};
@@ -332,17 +283,14 @@ export default function App() {
 			const elapsed = now - winStartMs;
 			
 			// 计算窗口参数
-			const deadline = is1h ? 55 * 60 * 1000 : 10 * 60 * 1000; // 截止计分时间
-			const saveTime = is1h ? 56 * 60 * 1000 : 10 * 60 * 1000; // 触发保存时间 (15m 也是 10min)
-			const isWarmup = elapsed < 0; // 是否在预热阶段 (T-15min 到 T)
-			const isActive = elapsed >= 0 && elapsed < deadline; // 是否在计分阶段
-			const isSavePeriod = elapsed >= saveTime; // 是否到达保存时间
+			const windowDuration = is1h ? 60 * 60 * 1000 : 15 * 60 * 1000;
+			const isStopBuyPhase = !is1h && (elapsed >= windowDuration - 3 * 60 * 1000 && elapsed < windowDuration - 1 * 60 * 1000);
+			const isLiquidationPhase = !is1h && (elapsed >= windowDuration - 1 * 60 * 1000);
+			
+			const isWarmup = elapsed < 0; 
+			const isActive = elapsed >= 0 && elapsed < windowDuration;
 
 			if (isWarmup || isActive) {
-				// 1. 首先更新单币对极值和策略分析 (每个币种只更新一次)
-				const statsPool = is1h ? singleAssetStats1hPoolRef : singleAssetStatsPoolRef;
-				const isMinPeriod = is1h ? true : (elapsed < 5 * 60 * 1000);
-				
 				ASSETS.forEach(asset => {
 					const data = markets[asset];
 					if (!data) return;
@@ -352,11 +300,19 @@ export default function App() {
 					const pUp = getLowestAsk(currentBooks[ids[0]]);
 					const pDown = getLowestAsk(currentBooks[ids[1]]);
 					
+					// 执行新策略逻辑
+					updateStrategy(asset, 'Up', pUp, winTs, is1h, isStopBuyPhase, isLiquidationPhase);
+					updateStrategy(asset, 'Down', pDown, winTs, is1h, isStopBuyPhase, isLiquidationPhase);
+
+					/* 暂时注释掉原有的极值记录功能
+					const statsPool = is1h ? singleAssetStats1hPoolRef : singleAssetStatsPoolRef;
+					const isMinPeriod = is1h ? true : (elapsed < 5 * 60 * 1000);
 					updateExtremes(asset, 'Up', pUp, statsPool.current, winTs, isMinPeriod, true, is1h);
 					updateExtremes(asset, 'Down', pDown, statsPool.current, winTs, isMinPeriod, true, is1h);
+					*/
 				});
 
-				// 2. 然后更新组合最小值
+				/* 暂时注释掉原有的组合最小值记录功能
 				ASSETS.forEach((assetA, i) => {
 					ASSETS.slice(i + 1).forEach(assetB => {
 						const dataA = markets[assetA];
@@ -394,45 +350,14 @@ export default function App() {
 						updateComboMin(assetA, assetB, prices.bUp, prices.aDown, '2', comboPool);
 					});
 				});
+				*/
 			}
 
-			// 保存逻辑
+			/* 暂时注释掉原有的保存逻辑
 			if (isSavePeriod && !hasSavedPoolRef.current[winTs]) {
-				const comboPool = is1h ? minPricesForCSV1hPoolRef : minPricesForCSVPoolRef;
-				const statsPool = is1h ? singleAssetStats1hPoolRef : singleAssetStatsPoolRef;
-				const saveFn = is1h ? appendMinPricesToCSV1h : appendMinPricesToCSV;
-				const saveStatsFn = is1h ? appendSingleAssetStatsToCSV1h : appendSingleAssetStatsToCSV;
-
-				if (comboPool.current[winTs]) {
-					const windowStr = formatWindowTime(winTs);
-					const combinationsToSave = [];
-					ASSETS.forEach((assetA, i) => {
-						ASSETS.slice(i + 1).forEach(assetB => {
-							['1', '2'].forEach(suffix => {
-								const key = `${assetA}_${assetB}_${suffix}`;
-								const data = comboPool.current[winTs][key];
-								if (data) {
-									combinationsToSave.push({
-										pair: `${assetA} & ${assetB}`,
-										label: suffix === '1' ? `${assetA} Up + ${assetB} Down` : `${assetB} Up + ${assetA} Down`,
-										minVal: data.val.toFixed(3),
-										time: data.time
-									});
-								}
-							});
-						});
-					});
-
-					if (combinationsToSave.length > 0) {
-						saveFn(windowStr, combinationsToSave, totalRetriesRef.current);
-						if (statsPool.current[winTs]) {
-							saveStatsFn(windowStr, statsPool.current[winTs], totalRetriesRef.current);
-						}
-						hasSavedPoolRef.current[winTs] = true;
-						console.log(`Saved ${type} market data for ${windowStr}`);
-					}
-				}
+				// 之前的保存逻辑已移出
 			}
+			*/
 		};
 
 		// 遍历所有活跃窗口进行处理
