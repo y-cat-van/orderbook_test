@@ -219,35 +219,46 @@ export default function App({ config }) {
 		const timeStr = formatOccurrenceTime(now);
 		const current15mTs = getCurrent15MinWindowTimestamp();
 
-		// 通用的策略分析逻辑
+		/**
+		 * 通用的策略分析逻辑 - 实现买入-卖出二段式状态机
+		 * 
+		 * 逻辑流:
+		 * 1. 状态 A (探测买入): 监控滑动窗口内的最高价(锚定点)与当前价的差值。
+		 * 2. 触发闪崩: 差值 >= dropThreshold -> 记录锚定点和买入点 -> 进入状态 B。
+		 * 3. 状态 B (探测卖出): 监控当前价与买入价的差值。
+		 * 4. 触发卖出: 达到止盈/止损距离, 或进入强制清仓阶段 -> 记录卖出点 -> 回到状态 A。
+		 */
 		const updateStrategy = (asset, direction, price, winTs, isStopBuyPhase, isLiquidationPhase) => {
 			if (price === null) return;
 
 			const strategyKey = `${asset}_${direction}`;
 			const pendingEvent = strategyEventsRef.current[strategyKey];
 
-			// 1. 如果处于“探测卖出机会阶段” (状态 B)
+			// --- 状态 B: 探测卖出机会阶段 ---
+			// 在此阶段，不再检测新的闪崩，专注于寻找止盈、止损或强制清仓的时机
 			if (pendingEvent) {
-				const isTakeProfit = price >= pendingEvent.buyPrice + tpDistance;
-				const isStopLoss = price <= pendingEvent.buyPrice - slDistance;
+				const isTakeProfit = price >= pendingEvent.buyPrice + tpDistance; // 需求 6: 止盈定义
+				const isStopLoss = price <= pendingEvent.buyPrice - slDistance;    // 需求 7: 止损定义
 
+				// 需求 8 & 10: 触发止盈/止损或强制清仓时进行卖出记录
 				if (isTakeProfit || isStopLoss || isLiquidationPhase) {
 					appendStrategyAnalysisToCSV({
 						...pendingEvent,
 						sellTime: timeStr,
 						sellPrice: price,
+						// 记录卖出状态原因
 						status: isLiquidationPhase ? 'FORCE_CLEAR' : (isTakeProfit ? 'TAKE_PROFIT' : 'STOP_LOSS')
 					});
-					delete strategyEventsRef.current[strategyKey]; // 回到状态 A
+					delete strategyEventsRef.current[strategyKey]; // 需求 8: 卖出后重新进入探测买入机会阶段 (状态 A)
 				}
 				return;
 			}
 
-			// 2. 如果处于“探测买入机会阶段” (状态 A)
-			// 如果是“停止买入阶段”或“清仓阶段”，不再探测新的闪崩
+			// --- 状态 A: 探测买入机会阶段 ---
+			// 需求 9 & 10: 如果处于“停止买入阶段”或“清仓阶段”，不再探测新的闪崩
 			if (isStopBuyPhase || isLiquidationPhase) return;
 
-			// 更新滑动窗口
+			// 维护滑动窗口 (需求 2 & 3: 默认 10s 窗口)
 			if (!priceWindowsRef.current[strategyKey]) priceWindowsRef.current[strategyKey] = [];
 			const window = priceWindowsRef.current[strategyKey];
 			window.push({ price, ts: now });
@@ -255,20 +266,24 @@ export default function App({ config }) {
 				window.shift();
 			}
 
-			// 检测闪崩
+			// 需求 2 & 3: 检测闪崩 (最新价格比前 N 秒内的最高价格低 X)
 			if (window.length > 1) {
+				// 寻找窗口内的最高价格作为“锚定价格”
 				const maxPriceObj = window.reduce((max, p) => p.price > max.price ? p : max, window[0]);
+				
+				// 计算跌幅
 				if (maxPriceObj.price - price >= dropThreshold) {
+					// 需求 4: 触发闪崩，记录关键信息并进入探测卖出阶段 (状态 B)
 					strategyEventsRef.current[strategyKey] = {
 						windowStart: formatWindowTime(winTs),
 						asset,
 						direction,
-						anchorTime: formatOccurrenceTime(maxPriceObj.ts),
-						anchorPrice: maxPriceObj.price,
-						buyTime: timeStr,
-						buyPrice: price
+						anchorTime: formatOccurrenceTime(maxPriceObj.ts), // 锚定时间
+						anchorPrice: maxPriceObj.price,                  // 锚定价格
+						buyTime: timeStr,                                 // 买入时间
+						buyPrice: price                                   // 买入价格
 					};
-					// 进入状态 B 后，清除窗口缓存，避免同一波下跌触发多次
+					// 进入状态 B 后，清除窗口缓存，避免在同一波下跌中重复触发买入
 					priceWindowsRef.current[strategyKey] = [];
 				}
 			}

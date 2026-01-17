@@ -171,7 +171,20 @@ export function appendMinPricesToCSV(windowStart, combinations, retryCount = 0) 
 }
 
 /**
- * Append strategy analysis events to a CSV file
+ * 记录策略分析事件到 rebound.csv
+ * 对应设计需求中的数据保存要求
+ * 
+ * 字段说明:
+ * - window_start: 15分钟轮次起点
+ * - asset: 资产 (BTC/ETH等)
+ * - direction: 方向 (Up/Down)
+ * - anchor_time: 锚定时间 (滑动窗口最高点)
+ * - anchor_price: 锚定价格 (滑动窗口最高点)
+ * - buy_time: 买入时间 (触发闪崩点)
+ * - buy_price: 买入价格 (触发闪崩点)
+ * - sell_time: 卖出时间 (触发止盈/止损/清仓点)
+ * - sell_price: 卖出价格
+ * - status: 卖出原因 (TAKE_PROFIT/STOP_LOSS/FORCE_CLEAR)
  */
 export function appendStrategyAnalysisToCSV(event) {
 	const filePath = path.join(process.cwd(), 'rebound.csv');
