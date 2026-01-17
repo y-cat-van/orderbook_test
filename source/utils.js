@@ -178,10 +178,11 @@ export function appendStrategyAnalysisToCSV(event) {
 	const fileExists = fs.existsSync(filePath);
 
 	if (!fileExists) {
-		fs.writeFileSync(filePath, 'window_start,asset,direction,drop_start_time,drop_start_price,drop_end_time,drop_end_price,rebound_time,rebound_price\n');
+		fs.writeFileSync(filePath, 'window_start,asset,direction,drop_start_time,drop_start_price,drop_end_time,drop_end_price,rebound_time,rebound_price,status\n');
 	}
 
-	const row = `"${event.windowStart}","${event.asset}","${event.direction}","${event.dropStartTime}","${event.dropStartPrice}","${event.dropEndTime}","${event.dropEndPrice}","${event.reboundTime}","${event.reboundPrice}"`;
+	const status = event.status || (event.reboundPrice ? 'SUCCESS' : 'PENDING');
+	const row = `"${event.windowStart}","${event.asset}","${event.direction}","${event.dropStartTime}","${event.dropStartPrice}","${event.dropEndTime}","${event.dropEndPrice}","${event.reboundTime || ''}","${event.reboundPrice || ''}","${status}"`;
 	fs.appendFileSync(filePath, row + '\n');
 }
 

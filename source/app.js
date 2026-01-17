@@ -271,8 +271,14 @@ export default function App() {
 				// 2. 如果已经在追踪事件，检查回升
 				const pendingEvent = strategyEventsRef.current[strategyKey];
 				if (pendingEvent) {
-					// 检查是否进一步下跌 0.05 (反弹失败)
+					// 检查是否进一步下跌 0.05 (反弹失败/止损)
 					if (price <= pendingEvent.triggerPrice - 0.05) {
+						appendStrategyAnalysisToCSV({
+							...pendingEvent,
+							reboundTime: timeStr,
+							reboundPrice: price,
+							status: 'STOP_LOSS'
+						});
 						delete strategyEventsRef.current[strategyKey];
 						// 注意：这里不要 return，否则会跳过后续的组合最小值等逻辑更新
 					} else {
@@ -286,7 +292,8 @@ export default function App() {
 							appendStrategyAnalysisToCSV({
 								...pendingEvent,
 								reboundTime: timeStr,
-								reboundPrice: price
+								reboundPrice: price,
+								status: 'SUCCESS'
 							});
 							delete strategyEventsRef.current[strategyKey]; // 完成记录
 						}
