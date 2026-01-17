@@ -174,7 +174,7 @@ export function appendMinPricesToCSV(windowStart, combinations, retryCount = 0) 
  * Append strategy analysis events to a CSV file
  */
 export function appendStrategyAnalysisToCSV(event) {
-	const filePath = path.join(process.cwd(), 'strategy_analysis.csv');
+	const filePath = path.join(process.cwd(), 'rebound.csv');
 	const fileExists = fs.existsSync(filePath);
 
 	if (!fileExists) {

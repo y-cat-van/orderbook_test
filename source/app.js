@@ -168,7 +168,8 @@ function PriceCombinations({markets, books, minPrices}) {
 }
 */
 
-export default function App() {
+export default function App({ config }) {
+	const { flashWindow = 10, dropThreshold = 0.08, tpDistance = 0.05, slDistance = 0.05 } = config || {};
 	const [status, setStatus] = useState('Initializing...');
 	const [error, setError] = useState(null);
 	const [markets, setMarkets] = useState({}); // { BTC: data, ETH: data, ... }
@@ -227,8 +228,8 @@ export default function App() {
 
 			// 1. 如果处于“探测卖出机会阶段” (状态 B)
 			if (pendingEvent) {
-				const isTakeProfit = price >= pendingEvent.buyPrice + 0.05;
-				const isStopLoss = price <= pendingEvent.buyPrice - 0.05;
+				const isTakeProfit = price >= pendingEvent.buyPrice + tpDistance;
+				const isStopLoss = price <= pendingEvent.buyPrice - slDistance;
 
 				if (isTakeProfit || isStopLoss || isLiquidationPhase) {
 					appendStrategyAnalysisToCSV({
@@ -246,18 +247,18 @@ export default function App() {
 			// 如果是“停止买入阶段”或“清仓阶段”，不再探测新的闪崩
 			if (isStopBuyPhase || isLiquidationPhase) return;
 
-			// 更新 10s 滑动窗口
+			// 更新滑动窗口
 			if (!priceWindowsRef.current[strategyKey]) priceWindowsRef.current[strategyKey] = [];
 			const window = priceWindowsRef.current[strategyKey];
 			window.push({ price, ts: now });
-			while (window.length > 0 && window[0].ts < now - 10000) {
+			while (window.length > 0 && window[0].ts < now - flashWindow * 1000) {
 				window.shift();
 			}
 
-			// 检测闪崩 (10s内跌够0.08)
+			// 检测闪崩
 			if (window.length > 1) {
 				const maxPriceObj = window.reduce((max, p) => p.price > max.price ? p : max, window[0]);
-				if (maxPriceObj.price - price >= 0.08) {
+				if (maxPriceObj.price - price >= dropThreshold) {
 					strategyEventsRef.current[strategyKey] = {
 						windowStart: formatWindowTime(winTs),
 						asset,
