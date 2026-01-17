@@ -14,7 +14,8 @@ coverage
 *.lcov
 .ava
 
-# Logs
+# Data & Logs
+*.csv
 logs
 *.log
 npm-debug.log*
