@@ -247,7 +247,14 @@ export default function App({ config }) {
 						sellTime: timeStr,
 						sellPrice: price,
 						// 记录卖出状态原因
-						status: isLiquidationPhase ? 'FORCE_CLEAR' : (isTakeProfit ? 'TAKE_PROFIT' : 'STOP_LOSS')
+						status: isLiquidationPhase ? 'FORCE_CLEAR' : (isTakeProfit ? 'TAKE_PROFIT' : 'STOP_LOSS'),
+						// 记录当前策略参数
+						config: {
+							flashWindow,
+							dropThreshold,
+							tpDistance,
+							slDistance
+						}
 					});
 					delete strategyEventsRef.current[strategyKey]; // 需求 8: 卖出后重新进入探测买入机会阶段 (状态 A)
 				}
