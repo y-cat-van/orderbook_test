@@ -2,10 +2,14 @@ import { parentPort, workerData } from 'worker_threads';
 import {
 	formatWindowTime,
 	formatOccurrenceTime,
+	ensureStrategyCSVHeader,
 	appendStrategyAnalysisToCSV
 } from './utils.js';
 
 const { id, config, asset, output } = workerData;
+
+// 初始化 CSV 文件
+ensureStrategyCSVHeader(output);
 const { flashWindow = 10, dropThreshold = 0.08, tpDistance = 0.05, slDistance = 0.05 } = config || {};
 
 // 策略状态

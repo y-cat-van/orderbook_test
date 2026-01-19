@@ -171,13 +171,11 @@ export function appendMinPricesToCSV(windowStart, combinations, retryCount = 0) 
 }
 
 /**
- * 记录策略分析事件到 rebound.csv (支持多线程自定义路径)
+ * 确保策略 CSV 文件存在并具有正确的表头
  */
-export function appendStrategyAnalysisToCSV(event, customFileName = 'rebound.csv') {
+export function ensureStrategyCSVHeader(customFileName = 'rebound.csv') {
 	const filePath = path.join(process.cwd(), customFileName);
-	const fileExists = fs.existsSync(filePath);
-
-	if (!fileExists) {
+	if (!fs.existsSync(filePath)) {
 		const header = [
 			'window_start', 'asset', 'direction',
 			'anchor_time', 'anchor_price', 'anchor_size',
@@ -187,6 +185,14 @@ export function appendStrategyAnalysisToCSV(event, customFileName = 'rebound.csv
 		].join(',');
 		fs.writeFileSync(filePath, header + '\n');
 	}
+}
+
+/**
+ * 记录策略分析事件到 rebound.csv (支持多线程自定义路径)
+ */
+export function appendStrategyAnalysisToCSV(event, customFileName = 'rebound.csv') {
+	ensureStrategyCSVHeader(customFileName);
+	const filePath = path.join(process.cwd(), customFileName);
 
 	const config = event.config || {};
 	const fields = [

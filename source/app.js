@@ -315,6 +315,7 @@ export default function App({ instances = [] }) {
 							<Box key={inst.id} flexDirection="column" marginBottom={1}>
 								<Text bold color="cyan">{inst.id} ({inst.asset})</Text>
 								<Text dimColor>  Params: w:{inst.params.window} d:{inst.params.drop} tp:{inst.params.tp} sl:{inst.params.sl}</Text>
+								<Text dimColor>  Output: {inst.output || 'rebound.csv'}</Text>
 								<Text>  Status: {state.hasUpPosition || state.hasDownPosition ? <Text color="red">POSITION HOLDING</Text> : <Text color="green">SCANNING</Text>}</Text>
 								{state.buyPrice && <Text color="magenta">  Last Buy: {state.buyPrice} (Anchor: {state.anchorPrice})</Text>}
 							</Box>
