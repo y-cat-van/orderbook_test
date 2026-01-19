@@ -10,7 +10,12 @@ const { id, config, asset, output } = workerData;
 
 // 初始化 CSV 文件
 ensureStrategyCSVHeader(output);
-const { flashWindow = 10, dropThreshold = 0.08, tpDistance = 0.05, slDistance = 0.05 } = config || {};
+const { 
+	window: flashWindow = 10, 
+	drop: dropThreshold = 0.08, 
+	tp: tpDistance = 0.05, 
+	sl: slDistance = 0.05 
+} = config || {};
 
 // 策略状态
 let priceWindows = {
