@@ -177,11 +177,11 @@ export function ensureStrategyCSVHeader(customFileName = 'rebound.csv') {
 	const filePath = path.join(process.cwd(), customFileName);
 	if (!fs.existsSync(filePath)) {
 		const header = [
-			'window_start', 'asset', 'direction',
+			'window_start', 'asset', 'strategy', 'direction',
 			'anchor_time', 'anchor_price', 'anchor_size',
 			'buy_time', 'buy_price', 'buy_size',
 			'sell_time', 'sell_price', 'sell_size',
-			'status', 'flash_window', 'drop_threshold', 'tp_distance', 'sl_distance'
+			'status', 'flash_window', 'trigger_threshold', 'tp_distance', 'sl_distance'
 		].join(',');
 		fs.writeFileSync(filePath, header + '\n');
 	}
@@ -196,12 +196,12 @@ export function appendStrategyAnalysisToCSV(event, customFileName = 'rebound.csv
 
 	const config = event.config || {};
 	const fields = [
-		event.windowStart, event.asset, event.direction,
+		event.windowStart, event.asset, event.strategy || 'rebound', event.direction,
 		event.anchorTime, event.anchorPrice, event.anchorSize || '',
 		event.buyTime, event.buyPrice, event.buySize || '',
 		event.sellTime, event.sellPrice, event.sellSize || '',
 		event.status,
-		config.flashWindow || '', config.dropThreshold || '',
+		config.flashWindow || '', config.triggerThreshold || '',
 		config.tpDistance || '', config.slDistance || ''
 	];
 

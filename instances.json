@@ -1,48 +1,64 @@
 {
   "instances": [
     {
-      "id": "btc-aggressive",
+      "id": "btc-rebound",
       "asset": "BTC",
       "params": {
+        "strategy": "rebound",
         "window": 10,
         "drop": 0.08,
         "tp": 0.05,
         "sl": 0.06
       },
-      "output": "rebound_btc_aggressive.csv"
+      "output": "btc_rebound.csv"
     },
     {
-      "id": "eth-conservative",
+      "id": "btc-pump",
+      "asset": "BTC",
+      "params": {
+        "strategy": "pump",
+        "window": 5,
+        "rise": 0.05,
+        "tp": 0.05,
+        "sl": 0.04
+      },
+      "output": "btc_pump.csv"
+    },
+    {
+      "id": "eth-rebound",
       "asset": "ETH",
       "params": {
+        "strategy": "rebound",
         "window": 8,
         "drop": 0.1,
         "tp": 0.08,
         "sl": 0.07
       },
-      "output": "rebound_eth_conservative.csv"
+      "output": "eth_rebound.csv"
     },
     {
       "id": "sol-standard",
       "asset": "SOL",
       "params": {
+        "strategy": "rebound",
         "window": 6,
         "drop": 0.08,
         "tp": 0.04,
         "sl": 0.04
       },
-      "output": "rebound_sol_standard.csv"
+      "output": "sol_rebound.csv"
     },
     {
-      "id": "xrp-standard",
+      "id": "xrp-pump",
       "asset": "XRP",
       "params": {
-        "window": 4,
-        "drop": 0.11,
-        "tp": 0.09,
-        "sl": 0.09
+        "strategy": "pump",
+        "window": 5,
+        "rise": 0.06,
+        "tp": 0.1,
+        "sl": 0.08
       },
-      "output": "rebound_xrp_standard.csv"
+      "output": "xrp_pump.csv"
     }
   ]
 }
