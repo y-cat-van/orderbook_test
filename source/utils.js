@@ -171,31 +171,35 @@ export function appendMinPricesToCSV(windowStart, combinations, retryCount = 0) 
 }
 
 /**
- * 记录策略分析事件到 rebound.csv
- * 对应设计需求中的数据保存要求
- * 
- * 字段说明:
- * - window_start: 15分钟轮次起点
- * - asset: 资产 (BTC/ETH等)
- * - direction: 方向 (Up/Down)
- * - anchor_time: 锚定时间 (滑动窗口最高点)
- * - anchor_price: 锚定价格 (滑动窗口最高点)
- * - buy_time: 买入时间 (触发闪崩点)
- * - buy_price: 买入价格 (触发闪崩点)
- * - sell_time: 卖出时间 (触发止盈/止损/清仓点)
- * - sell_price: 卖出价格
- * - status: 卖出原因 (TAKE_PROFIT/STOP_LOSS/FORCE_CLEAR)
+ * 记录策略分析事件到 rebound.csv (支持多线程自定义路径)
  */
-export function appendStrategyAnalysisToCSV(event) {
-	const filePath = path.join(process.cwd(), 'rebound.csv');
+export function appendStrategyAnalysisToCSV(event, customFileName = 'rebound.csv') {
+	const filePath = path.join(process.cwd(), customFileName);
 	const fileExists = fs.existsSync(filePath);
 
 	if (!fileExists) {
-		fs.writeFileSync(filePath, 'window_start,asset,direction,anchor_time,anchor_price,buy_time,buy_price,sell_time,sell_price,status,flash_window,drop_threshold,tp_distance,sl_distance\n');
+		const header = [
+			'window_start', 'asset', 'direction',
+			'anchor_time', 'anchor_price', 'anchor_size',
+			'buy_time', 'buy_price', 'buy_size',
+			'sell_time', 'sell_price', 'sell_size',
+			'status', 'flash_window', 'drop_threshold', 'tp_distance', 'sl_distance'
+		].join(',');
+		fs.writeFileSync(filePath, header + '\n');
 	}
 
 	const config = event.config || {};
-	const row = `"${event.windowStart}","${event.asset}","${event.direction}","${event.anchorTime}","${event.anchorPrice}","${event.buyTime}","${event.buyPrice}","${event.sellTime}","${event.sellPrice}","${event.status}","${config.flashWindow || ''}","${config.dropThreshold || ''}","${config.tpDistance || ''}","${config.slDistance || ''}"`;
+	const fields = [
+		event.windowStart, event.asset, event.direction,
+		event.anchorTime, event.anchorPrice, event.anchorSize || '',
+		event.buyTime, event.buyPrice, event.buySize || '',
+		event.sellTime, event.sellPrice, event.sellSize || '',
+		event.status,
+		config.flashWindow || '', config.dropThreshold || '',
+		config.tpDistance || '', config.slDistance || ''
+	];
+
+	const row = fields.map(f => `"${f}"`).join(',');
 	fs.appendFileSync(filePath, row + '\n');
 }
 

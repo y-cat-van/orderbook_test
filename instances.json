@@ -1,0 +1,37 @@
+{
+  "instances": [
+    {
+      "id": "btc-aggressive",
+      "asset": "BTC",
+      "params": {
+        "window": 10,
+        "drop": 0.05,
+        "tp": 0.03,
+        "sl": 0.03
+      },
+      "output": "rebound_btc_aggressive.csv"
+    },
+    {
+      "id": "eth-conservative",
+      "asset": "ETH",
+      "params": {
+        "window": 20,
+        "drop": 0.1,
+        "tp": 0.05,
+        "sl": 0.05
+      },
+      "output": "rebound_eth_conservative.csv"
+    },
+    {
+      "id": "sol-standard",
+      "asset": "SOL",
+      "params": {
+        "window": 15,
+        "drop": 0.08,
+        "tp": 0.04,
+        "sl": 0.04
+      },
+      "output": "rebound_sol_standard.csv"
+    }
+  ]
+}

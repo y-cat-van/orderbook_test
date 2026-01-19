@@ -58,5 +58,5 @@
 ---
 
 ## 数据保存
-所有策略执行记录保存在 `rebound.csv` 中，包含以下字段：
-`window_start, asset, direction, anchor_time, anchor_price, buy_time, buy_price, sell_time, sell_price, status`
+所有策略执行记录保存在 `rebound.csv` (或指定文件) 中，包含以下字段：
+`window_start, asset, direction, anchor_time, anchor_price, anchor_size, buy_time, buy_price, buy_size, sell_time, sell_price, sell_size, status, flash_window, drop_threshold, tp_distance, sl_distance`
