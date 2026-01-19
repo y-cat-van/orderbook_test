@@ -15,6 +15,7 @@ coverage
 .ava
 
 # Data & Logs
+instances.json
 *.csv
 logs
 *.log
